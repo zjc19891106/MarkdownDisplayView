@@ -16,7 +16,7 @@
 
 ## ✨ 特性
 
-- 🚀 **高性能渲染** - 基于 TextKit 2，支持异步渲染和增量更新，流式渲染等，示例全部加载示例md内容渲染时间不到200ms,MarkdownView那个库渲染同样内容超过400ms
+- 🚀 **高性能渲染** - 基于 TextKit 2，支持异步渲染和增量更新，流式渲染等，示例全部加载示例md内容渲染时间首次270ms左右,再次渲染120ms左右,MarkdownView库渲染同样内容超过400ms
 - 🎨 **完整 Markdown 支持** - 标题、列表、表格、代码块、引用、图片等
 - 🌈 **语法高亮** - 支持 20+ 种编程语言的代码高亮（Swift、Python、JavaScript 等）
 - 📑 **自动目录** - 自动提取标题生成可交互目录
@@ -66,6 +66,7 @@ dependencies: [
 在你的 `Podfile` 中添加以下内容:
 
 ```ruby
+
 pod 'MarkdownDisplayKit'
 ```
 

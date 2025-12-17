@@ -8,7 +8,6 @@
 import UIKit
 import Foundation
 import Combine
-import Markdown
 import NaturalLanguage
 
 // MARK: - TextKit2 TextView
@@ -383,33 +382,26 @@ public final class MarkdownViewTextKit: UIView {
         let config = configuration
         let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
         
-        // 异步解析和渲染
         renderQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard let self else { return }
             
             let startTime = CFAbsoluteTimeGetCurrent()
             
             // 预处理脚注
             let (processedMarkdown, footnotes) = self.preprocessFootnotes(markdownText)
-            let document = Document(parsing: processedMarkdown)
             
-            // 提取目录
-            var tocItems: [MarkdownTOCItem] = []
-            var headingIndex = 0
-            self.extractHeadings(from: document, index: &headingIndex, items: &tocItems)
-            
-            // 渲染元素
+            // 直接渲染，获取所有需要的返回
             let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
-            let (newElements, attachments) = renderer.render(document)
+            let (newElements, attachments, tocItems, tocSectionId) = renderer.render(processedMarkdown)
             
             let endTime = CFAbsoluteTimeGetCurrent()
             print("[MarkdownDisplayView] parse took \(endTime - startTime) seconds")
             
-            // 回到主线程更新UI
             DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
+                guard let self else { return }
                 
                 self.tableOfContents = tocItems
+                self.tocSectionId = tocSectionId  // ← 这里就是你需要的！用于后续滚动
                 self.imageAttachments = attachments
                 self.updateViews(newElements: newElements, footnotes: footnotes, containerWidth: containerWidth)
             }
@@ -892,7 +884,7 @@ public final class MarkdownViewTextKit: UIView {
         summaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .medium)
 //        summaryButton.backgroundColor = configuration.codeBackgroundColor
         summaryButton.layer.cornerRadius = 6
-        summaryButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
+        summaryButton.configuration?.contentInsets = .init(top: 8, leading: 12, bottom: 8, trailing: 12)
         summaryButton.setContentHuggingPriority(.required, for: .vertical)
         summaryButton.setContentCompressionResistancePriority(.required, for: .vertical)
         container.addArrangedSubview(summaryButton)
@@ -1161,30 +1153,6 @@ public final class MarkdownViewTextKit: UIView {
         return container
     }
     
-    // MARK: - TOC Extraction
-    
-    private func extractHeadings(from markup: any Markup, index: inout Int, items: inout [MarkdownTOCItem]) {
-        if let heading = markup as? Heading {
-            let title = heading.plainText
-            let id = "heading-\(index)"
-            
-            // 检测目录区域（常见的目录标题）
-            let tocKeywords = ["目录", "table of contents", "toc", "contents", "索引"]
-            let lowerTitle = title.lowercased()
-            if tocKeywords.contains(where: { lowerTitle.contains($0) }) {
-                tocSectionId = id
-            }
-                    
-            
-            items.append(MarkdownTOCItem(level: heading.level, title: title, id: id))
-            index += 1
-        }
-        
-        for child in markup.children {
-            extractHeadings(from: child, index: &index, items: &items)
-        }
-    }
-    
     // MARK: - Footnote Preprocessing
     
     private func preprocessFootnotes(_ text: String) -> (String, [MarkdownFootnote]) {
@@ -1288,12 +1256,10 @@ public final class MarkdownViewTextKit: UIView {
     }
     
     private func refreshTextViews() {
-        for subview in contentStackView.arrangedSubviews {
-            if let container = subview as? UIView {
-                for childView in container.subviews {
-                    if let textView = childView as? MarkdownTextViewTK2 {
-                        textView.setNeedsDisplay()
-                    }
+        for container in contentStackView.arrangedSubviews {
+            for childView in container.subviews {
+                if let textView = childView as? MarkdownTextViewTK2 {
+                    textView.setNeedsDisplay()
                 }
             }
         }

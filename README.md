@@ -13,7 +13,7 @@ A powerful iOS Markdown rendering component built on TextKit 2, providing smooth
 ![Streaming Rendering](./Effects/streaming.gif)
 
 ## ✨ Features
-- 🚀 **High-Performance Rendering** — Based on TextKit 2, supports asynchronous rendering, incremental updates, streaming rendering, etc. Full loading and rendering of sample Markdown content takes less than 200ms (compared to over 400ms for the MarkdownView library with the same content).
+- 🚀 **High-Performance Rendering** — Based on TextKit 2, supports asynchronous rendering, incremental updates, streaming rendering, etc. Initial full loading and rendering of the sample Markdown content completes in under 270 ms.Initial full loading and rendering of the sample Markdown content completes in under 270 ms. (compared to over 400ms for the MarkdownView library with the same content).
 - 🎨 **Full Markdown Support** — Headings, lists, tables, code blocks, blockquotes, images, and more.
 - 🌈 **Syntax Highlighting** — Supports syntax highlighting for 20+ programming languages (Swift, Python, JavaScript, etc.).
 - 📑 **Automatic Table of Contents** — Automatically extracts headings to generate an interactive TOC.
@@ -44,7 +44,7 @@ dependencies: [
 ```
 
 ### CocoaPods
-Add the following line to your `Podfile`:
+Add the following lines to your `Podfile`:
 
 ```ruby
 pod 'MarkdownDisplayKit'
@@ -55,6 +55,8 @@ Then run:
 ```bash
 pod install
 ```
+
+**Note**: MarkdownDisplayKit depends on `swift-markdown` for Markdown parsing. Since `swift-markdown` is not yet available on CocoaPods trunk, you need to add it from the GitHub source as shown above.
 
 ## 🚀 Quick Start
 

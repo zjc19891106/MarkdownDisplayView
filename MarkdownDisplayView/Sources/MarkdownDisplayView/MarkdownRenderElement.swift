@@ -9,12 +9,12 @@ import Foundation
 import UIKit
 
 /// 表格数据
-struct MarkdownTableData: Equatable {
+public struct MarkdownTableData: Equatable {
     var headers: [NSAttributedString]
     var rows: [[NSAttributedString]]
 }
 
-enum MarkdownRenderElement: Equatable {
+public enum MarkdownRenderElement: Equatable {
     case attributedText(NSAttributedString)
     case table(MarkdownTableData)
     case heading(id: String, text: NSAttributedString)

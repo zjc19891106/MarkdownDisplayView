@@ -8,13 +8,13 @@
 import UIKit
 
 /// 自定义图片附件，支持按比例缩放
-final class MarkdownImageAttachment: NSTextAttachment {
+public final class MarkdownImageAttachment: NSTextAttachment {
     
     var maxWidth: CGFloat = 0
     var maxHeight: CGFloat = 400
     var imageURL: String?
     
-    override func attachmentBounds(
+    public override func attachmentBounds(
         for textContainer: NSTextContainer?,
         proposedLineFragment lineFrag: CGRect,
         glyphPosition position: CGPoint,
