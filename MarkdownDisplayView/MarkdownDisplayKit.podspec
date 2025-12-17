@@ -35,7 +35,7 @@ Pod::Spec.new do |s|
 
   s.ios.deployment_target = '15.0'
   s.swift_versions = ['5.9']
-  s.source_files = 'Sources/MarkdownDisplayView/**/*.swift'
+  s.source_files = 'Sources/**/*.swift'  # 递归匹配 Sources 下所有子目录的 .swift 文件
   # System frameworks
   s.frameworks = 'UIKit', 'Foundation', 'Combine', 'NaturalLanguage'
 
