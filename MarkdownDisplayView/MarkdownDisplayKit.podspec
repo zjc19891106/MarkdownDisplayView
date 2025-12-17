@@ -23,6 +23,12 @@ TODO: Add long description of the pod here.
   s.ios.deployment_target = '15.0'
 
   s.source_files = 'Sources/MarkdownDisplayView/**/*.swift'
-  
+
+  # System frameworks
+  s.frameworks = 'UIKit', 'Foundation', 'Combine', 'NaturalLanguage'
+
+  # Dependencies - 使用swift-markdown的CocoaPods包装
+  # 注意：这个库还没有正式发布到CocoaPods trunk，需要在Podfile中指定git源
+  s.dependency 'apple-swift-markdown'
 
 end
