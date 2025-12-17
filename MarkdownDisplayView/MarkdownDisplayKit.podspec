@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'MarkdownDisplayKit'
-  s.version          = '1.1.1'
+  s.version          = '1.1.2'
   s.summary          = '一个功能强大的 iOS Markdown 渲染组件，基于 TextKit 2 构建，提供流畅的渲染性能和丰富的自定义选项。'
 
   s.description      = <<-DESC
@@ -36,6 +36,7 @@ Pod::Spec.new do |s|
   s.ios.deployment_target = '15.0'
   s.swift_versions = ['5.9']
   s.source_files = 'MarkdownDisplayView/**/*.swift'  # 递归匹配 MarkdownDisplayView/ 下所有 .swift
+  s.exclude_files = 'MarkdownDisplayView/Tests/**/*', 'MarkdownDisplayView/Package.swift'
   # System frameworks
   s.frameworks = 'UIKit', 'Foundation', 'Combine', 'NaturalLanguage'
 
