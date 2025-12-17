@@ -35,16 +35,16 @@
 
 ### Swift Package Manager
 
-#### 方式一：Xcode 添加
+#### 方式一:Xcode 添加
 
 1. 在 Xcode 中打开你的项目
 2. 选择 `File` → `Add Package Dependencies...`
-3. 输入仓库 URL：`https://github.com/你的用户名/MarkdownDisplayView.git`
+3. 输入仓库 URL:`https://github.com/你的用户名/MarkdownDisplayView.git`
 4. 选择版本并点击 `Add Package`
 
-#### 方式二：Package.swift
+#### 方式二:Package.swift
 
-在 `Package.swift` 中添加依赖：
+在 `Package.swift` 中添加依赖:
 
 ```swift
 dependencies: [
@@ -52,13 +52,27 @@ dependencies: [
 ]
 ```
 
-然后在 target 中添加：
+然后在 target 中添加:
 
 ```swift
 .target(
     name: "YourTarget",
     dependencies: ["MarkdownDisplayView"]
 )
+```
+
+### CocoaPods
+
+在你的 `Podfile` 中添加以下内容:
+
+```ruby
+pod 'MarkdownDisplayKit'
+```
+
+然后运行:
+
+```bash
+pod install
 ```
 
 ## 🚀 快速开始

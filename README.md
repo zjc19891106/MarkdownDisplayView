@@ -41,3 +41,16 @@ Add the dependency in `Package.swift`:
 dependencies: [
     .package(url: "https://github.com/yourusername/MarkdownDisplayView.git", from: "1.0.0")
 ]
+```
+
+### CocoaPods
+Add the following line to your `Podfile`:
+
+```ruby
+pod 'MarkdownDisplayKit'
+```
+
+Then run:
+
+```bash
+pod install
