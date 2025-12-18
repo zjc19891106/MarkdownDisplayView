@@ -15,7 +15,7 @@ let package = Package(
 
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-markdown.git", branch: "main"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", revision: "swift-6.2.3-RELEASE"),
 
     ],
     targets: [
