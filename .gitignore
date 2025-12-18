@@ -1,1 +1,5 @@
 /CocoapodsMDExample/Pods
+
+# SPM build artifacts
+.build/
+.swiftpm/

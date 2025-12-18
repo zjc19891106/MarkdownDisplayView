@@ -12,11 +12,11 @@ let package = Package(
             name: "MarkdownDisplayView",
             targets: ["MarkdownDisplayView"]
         ),
-        
+
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-markdown.git", branch: "main"),
-        
+
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -26,6 +26,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown")
             ],
+            path: "MarkdownDisplayView/Sources/MarkdownDisplayView",
             swiftSettings: [
                 // SPM自动定义SWIFT_PACKAGE,我们不需要额外设置
             ],
@@ -38,7 +39,8 @@ let package = Package(
         ),
         .testTarget(
             name: "MarkdownDisplayViewTests",
-            dependencies: ["MarkdownDisplayView"]
+            dependencies: ["MarkdownDisplayView"],
+            path: "MarkdownDisplayView/Tests/MarkdownDisplayViewTests"
         ),
     ]
 )
