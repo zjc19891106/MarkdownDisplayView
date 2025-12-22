@@ -14,7 +14,7 @@ A powerful iOS Markdown rendering component built on TextKit 2, providing smooth
 
 ## ✨ Features
 - 🚀 **High-Performance Rendering** — Based on TextKit 2, supports asynchronous rendering, incremental updates, streaming rendering, etc. Initial full loading and rendering of the sample Markdown content completes in under 270 ms.Initial full loading and rendering of the sample Markdown content completes in under 270 ms. (compared to over 400ms for the MarkdownView library with the same content).
-- 🎨 **Full Markdown Support** — Headings, lists, tables, code blocks, blockquotes, images, and more.
+- 🎨 **Full Markdown Support** — Formula of LaTeX protocol, Headings, lists, tables, code blocks, blockquotes, images, and more.
 - 🌈 **Syntax Highlighting** — Supports syntax highlighting for 20+ programming languages (Swift, Python, JavaScript, etc.).
 - 📑 **Automatic Table of Contents** — Automatically extracts headings to generate an interactive TOC.
 - 🎯 **Highly Customizable** — Comprehensive configuration for fonts, colors, spacing, etc.
