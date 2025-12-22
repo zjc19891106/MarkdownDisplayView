@@ -554,7 +554,7 @@ MarkdownDisplayView is created and maintained by [@zjc19891106](https://github.c
 If you have questions or suggestions, please contact via:
 
 - Submit [GitHub Issue](https://github.com/zjc19891106/MarkdownDisplayView/issues)
-- Send email to: your.email@example.com
+- Send email to: 984065974@qq.com or luomobancheng@gmail.com
 
 ---
 
