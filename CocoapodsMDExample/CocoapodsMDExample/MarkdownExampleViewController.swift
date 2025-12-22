@@ -115,6 +115,8 @@ let sampleMarkdown = """
     ## 目录
 
     本文档包含以下测试内容：
+        
+    0. [公式测试](#公式测试)
     1. [标题层级测试](#标题层级测试)
     2. [文本格式测试](#文本格式测试)
     3. [链接测试](#链接测试)
@@ -158,7 +160,153 @@ let sampleMarkdown = """
     </details>
 
     ---
+    # 零、公式测试
 
+    ## 0.1 二次方程公式
+
+    $$\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$$
+
+    ## 0.2 高斯积分
+
+    $$\\int_{0}^{\\infty} e^{-x^2} dx = \\frac{\\sqrt{\\pi}}{2}$$
+
+    ## 0.3 矩阵 (bmatrix)
+
+    $$\\begin{bmatrix} 1 & x & x^2 \\\\\\\\ 0 & 1 & 2x \\\\\\\\ 0 & 0 & 2 \\end{bmatrix}$$
+
+    ## 0.4 嵌套混合
+
+    $$f(x) = \\begin{pmatrix} \\frac{1}{2} & \\sqrt{x} \\\\\\\\ \\alpha & \\beta \\end{pmatrix}$$
+
+    ## 0.5 求和公式
+
+    $$\\sum_{i=0}^{n} i^2 = \\frac{n(n+1)(2n+1)}{6}$$
+
+    ## 0.6 极限
+
+    $$\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1$$
+
+    ## 0.7 动态括号
+
+    $$\\left( \\frac{a}{b} + c \\right) \\times \\left[ 1 + x \\right]$$
+
+    ## 0.8 定积分
+
+    $$\\int_{a}^{b} f(x) dx$$
+
+    ## 0.9 物理向量与样式
+
+    $$\\mathbf{F} = m \\vec{a} \\quad \\mathrm{(Newton's Law)}$$
+
+    ## 0.10 颜色与装饰符
+
+    $$\\bar{x} = \\frac{1}{n} \\color{red}{\\sum_{i=1}^{n} x_i}$$
+
+    ## 0.11 各类重音符号
+
+    $$\\hat{v} = \\frac{\\dot{r}}{|r|}$$
+
+    ## 0.12 文本混排
+
+    $$\\text{if } x > 0, \\quad y = \\color{blue}{\\sqrt{x}}$$
+
+    ## 0.13 物理平均速度
+
+    $$\\overline{v} = \\boxed{\\frac{\\Delta x}{\\Delta t}}$$
+
+    ## 0.14 概率组合数
+
+    $$P(A) = \\frac{\\binom{n}{k}}{2^n}$$
+
+    ## 0.15 分段函数
+
+    $$f(x) = \\begin{cases} x^2 & x > 0 \\\\\\\\ -x & x \\le 0 \\end{cases}$$
+
+    ## 0.16 下划线标记
+
+    $$\\underline{A} \\cup \\underline{B} = \\text{All}$$
+
+    ## 0.17 伸缩箭头
+
+    $$A \\xrightarrow{\\text{heat}} B$$
+
+    ## 0.18 化学反应
+
+    $$\\ce{2H2 + O2 -> 2H2O}$$
+
+    ## 0.19 离子方程式
+
+    $$\\ce{Cu^2+ + 2OH- -> Cu(OH)2}$$
+
+    ## 0.20 化学平衡
+
+    $$\\ce{N2 + 3H2 \\xleftarrow[\\text{high P}]{\\text{high T}} 2NH3}$$
+
+    ## 0.21 银氨溶液
+
+    $$\\ce{[Ag(NH3)2]+ + OH- -> AgOH \\downarrow + 2NH3}$$
+
+    ## 0.22 辛烷燃烧
+
+    $$\\ce{2C8H_{18} + 25O2 -> 16CO2 + 18H2O}$$
+
+    ## 0.23 合成氨 (修复文字)
+
+    $$N_2 + 3H_2 \\xrightarrow[\\text{high P}]{\\text{high T}} 2NH_3$$
+
+    ## 0.24 酯化反应
+
+    $$C_2H_5OH + CH_3COOH \\xrightarrow{\\text{conc. H}_2\\text{SO}_4} CH_3COOC_2H_5 + H_2O$$
+
+    ## 0.25 沉淀符号测试
+
+    $$AgOH \\downarrow + 2NH_3$$
+
+    ## 0.26 基础芳香环 (Aromatic)
+
+    $$\\chemfig{**6(------)}$$
+
+    ## 0.27 凯库勒式 (Kekulé)
+
+    $$\\chemfig{*6(-=-=-=)}$$
+
+    ## 0.28 垂直对齐 (Check Baseline!)
+
+    $$A + \\chemfig{**6(------)} \\rightarrow B$$
+
+    ## 0.29 苯酚 (Substituents)
+
+    $$\\chemfig{**6(---(-CH_3)---)}$$
+
+    ## 0.30 TNT (Complex Layout)
+
+    $$\\chemfig{**6(-NO_2-(-CH_3)-NO_2--NO_2-)}$$
+
+    ## 0.31 终极测试：反应方程式
+
+    $$\\chemfig{**6(---(-CH_3)---)} + 3HNO_3 \\longrightarrow \\chemfig{**6(-NO_2-(-CH_3)-NO_2--NO_2-)} + 3H_2O$$
+
+    ## 0.32 傅里叶变换
+
+    $$\\mathcal{F}(\\omega) = \\int_{-\\infty}^{\\infty} f(t) e^{-i\\omega t} dt$$
+
+    ## 0.33 正态分布
+
+    $$X \\sim \\mathcal{N}(\\mu, \\sigma^2) \\quad f(x) = \\frac{1}{\\sqrt{2\\pi}\\sigma} e^{-\\frac{(x-\\mu)^2}{2\\sigma^2}}$$
+
+    ## 0.34 薛定谔方程
+
+    $$i\\hbar \\frac{\\partial}{\\partial t} \\Psi = \\hat{H} \\Psi$$
+
+    ## 0.35 高斯定律
+
+    $$\\oint_{\\partial V} \\vec{E} \\cdot d\\vec{A} = \\frac{Q}{\\epsilon_0}$$
+
+    ## 0.36 实数集公理
+
+    $$\\forall x \\in \\mathbb{R}, \\quad x^2 \\geq 0$$
+
+    ---
     # 一、标题层级测试
 
     # H1 一级标题 - 最大标题
@@ -715,6 +863,8 @@ let sampleMarkdown = """
     **粗***斜*`码`~~删~~**粗***斜*`码`~~删~~
 
     ---
+
+    
 
     # 总结
 

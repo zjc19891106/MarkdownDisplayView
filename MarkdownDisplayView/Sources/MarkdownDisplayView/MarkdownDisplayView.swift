@@ -209,6 +209,10 @@ public final class MarkdownViewTextKit: UIView {
     public var onImageTap: ((String) -> Void)?
     public var onHeightChange: ((CGFloat) -> Void)?
     public var onTOCItemTap: ((MarkdownTOCItem) -> Void)?
+    // 🆕 新增：用于暂存流式输出结束时的回调
+    private var onStreamComplete: (() -> Void)?
+    // 新增属性来存储原子区间
+    private var streamAtomicRanges: [NSRange] = []
     
     public private(set) var tableOfContents: [MarkdownTOCItem] = []
     
@@ -224,21 +228,28 @@ public final class MarkdownViewTextKit: UIView {
     private var imageAttachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
     private var renderWorkItem: DispatchWorkItem?
     private var refreshWorkItem: DispatchWorkItem?
-    
+
     private var headingViews: [String: UIView] = [:]
     private var oldElements: [MarkdownRenderElement] = []
-    
-    // 异步渲染队列
+
+    // 异步渲染队列（串行，避免并发渲染）
     private let renderQueue = DispatchQueue(label: "com.markdown.render", qos: .userInitiated)
+
+    // 渲染版本控制（解决竞态问题）
+    private var renderVersion: Int = 0
+    private let renderVersionLock = NSLock()
     
     /// About streaming
     private var streamTimer: Timer?
     private var streamFullText: String = ""
     private var streamCurrentIndex: Int = 0
     private var isStreaming = true
-    
+
     private var streamTokens: [String] = []
     private var streamTokenIndex: Int = 0
+
+    // ⭐️ 新增：暂停显示控制
+    private var isPausedForDisplay: Bool = false
     
     // 添加属性
     private var tocSectionView: UIView?
@@ -251,8 +262,13 @@ public final class MarkdownViewTextKit: UIView {
     }
     
     private var autoScrollEnabled: Bool = false
+
+    // 流式渲染节流（避免过度渲染）
+    private var lastStreamRenderTime: TimeInterval = 0
+    private let streamRenderThrottle: TimeInterval = 0.05  // 50ms 节流
+
     // MARK: - Initialization
-    
+
     public override init(frame: CGRect) {
         super.init(frame: frame)
         setupUI()
@@ -360,19 +376,39 @@ public final class MarkdownViewTextKit: UIView {
     // MARK: - Rendering
     
     private func scheduleRerender() {
+        // ⭐️ 如果暂停显示，跳过渲染
+        guard !isPausedForDisplay else { return }
+
         renderWorkItem?.cancel()
-        
+
         if isStreaming {
-            // 流式模式直接渲染，不延迟
-            performRender()
+            // 流式模式：节流渲染，避免过度
+            let now = CACurrentMediaTime()
+            let timeSinceLastRender = now - lastStreamRenderTime
+
+            if timeSinceLastRender >= streamRenderThrottle {
+                // 距离上次渲染已超过节流时间，立即渲染
+                lastStreamRenderTime = now
+                performRender()
+            } else {
+                // 还在节流期内，延迟到节流时间后渲染
+                let delay = streamRenderThrottle - timeSinceLastRender
+                let workItem = DispatchWorkItem { [weak self] in
+                    guard let self = self, self.isStreaming else { return }
+                    self.lastStreamRenderTime = CACurrentMediaTime()
+                    self.performRender()
+                }
+                renderWorkItem = workItem
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+            }
             return
         }
-        
+
         let workItem = DispatchWorkItem { [weak self] in
             self?.performRender()
         }
         renderWorkItem = workItem
-        
+
         // 延迟执行以合并多次快速更新
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.016, execute: workItem)
     }
@@ -381,27 +417,43 @@ public final class MarkdownViewTextKit: UIView {
         let markdownText = markdown
         let config = configuration
         let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-        
+
+        // 增加渲染版本号（线程安全）
+        renderVersionLock.lock()
+        renderVersion += 1
+        let currentVersion = renderVersion
+        renderVersionLock.unlock()
+
         renderQueue.async { [weak self] in
             guard let self else { return }
-            
+
             let startTime = CFAbsoluteTimeGetCurrent()
-            
+
             // 预处理脚注
             let (processedMarkdown, footnotes) = self.preprocessFootnotes(markdownText)
-            
+
             // 直接渲染，获取所有需要的返回
             let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
             let (newElements, attachments, tocItems, tocSectionId) = renderer.render(processedMarkdown)
-            
+
             let endTime = CFAbsoluteTimeGetCurrent()
             print("[MarkdownDisplayView] parse took \(endTime - startTime) seconds")
-            
+
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                
+
+                // ⭐️ 关键：只使用最新版本的渲染结果
+                self.renderVersionLock.lock()
+                let isLatestVersion = currentVersion == self.renderVersion
+                self.renderVersionLock.unlock()
+
+                guard isLatestVersion else {
+                    print("[MarkdownDisplayView] 丢弃旧版本渲染结果 (version \(currentVersion))")
+                    return
+                }
+
                 self.tableOfContents = tocItems
-                self.tocSectionId = tocSectionId  // ← 这里就是你需要的！用于后续滚动
+                self.tocSectionId = tocSectionId
                 self.imageAttachments = attachments
                 self.updateViews(newElements: newElements, footnotes: footnotes, containerWidth: containerWidth)
             }
@@ -535,7 +587,7 @@ public final class MarkdownViewTextKit: UIView {
                 width: containerWidth,
                 insets: UIEdgeInsets(top: configuration.headingTopSpacing, left: 0, bottom: configuration.headingBottomSpacing, right: 0)
             )
-            
+
         case .attributedText(let attributedString):
             if attributedString.length > 0 {
                 return createTextView(
@@ -546,26 +598,64 @@ public final class MarkdownViewTextKit: UIView {
             } else {
                 return UIView()
             }
-            
+
         case .table(let tableData):
             return createTableView(with: tableData, containerWidth: containerWidth)
-            
+
         case .thematicBreak:
             return createThematicBreakView(width: containerWidth)
         case .codeBlock(let attributedString):
             return createCodeBlockView(with: attributedString, width: containerWidth)
         case .quote(let attributedString, let level):
             return createQuoteView(with: attributedString, width: containerWidth, level: level)
-            
+
         case .details(let summary, let children):
             return createDetailsView(summary: summary, children: children, width: containerWidth)
         case .image(let source, let altText):
             return createImageView(source: source, altText: altText, width: containerWidth)
+        case .latex(let latex):
+            return createLatexView(latex: latex, width: containerWidth)
         case .rawHTML:
             return UIView()
         }
     }
     
+    /// 创建 LaTeX 公式视图
+    private func createLatexView(latex: String, width: CGFloat) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        // 使用 LatexMathView.createScrollableView 创建公式视图
+        let formulaView = LatexMathView.createScrollableView(
+            latex: latex,
+            fontSize: 22,
+            maxWidth: width,
+            padding: 20,
+            backgroundColor: UIColor.systemGray6.withAlphaComponent(0.5)
+        )
+
+        formulaView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(formulaView)
+
+        // 获取公式视图的实际尺寸
+        let formulaSize = LatexMathView.calculateSize(
+            latex: latex,
+            fontSize: 22,
+            padding: 20
+        )
+
+        // 设置约束
+        NSLayoutConstraint.activate([
+            formulaView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            formulaView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            formulaView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            formulaView.widthAnchor.constraint(equalToConstant: min(formulaSize.width, width)),
+            formulaView.heightAnchor.constraint(equalToConstant: formulaSize.height)
+        ])
+
+        return container
+    }
+
     private func createImageView(source: String, altText: String, width: CGFloat) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -1297,21 +1387,170 @@ public final class MarkdownViewTextKit: UIView {
     }
     
     //MARK: - streaming method
-
-    public func startStreaming(_ text: String, unit: StreamingUnit = .word, unitsPerChunk: Int = 1, interval: TimeInterval = 0.05, autoScrollBottom: Bool = false) {
-        autoScrollEnabled = autoScrollBottom
-        stopStreaming()
-        isStreaming = true
-        
-        streamFullText = text
-        streamTokens = tokenize(text, unit: unit)
-        streamTokenIndex = 0
-        markdown = ""
-        
-        streamTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            self?.appendNextTokens(count: unitsPerChunk)
+    /// 计算需要原子化输出的区间（公式、图片、链接）
+        private func calculateAtomicRanges(in text: String) -> [NSRange] {
+            var ranges: [NSRange] = []
+            let nsString = text as NSString
+            
+            // 定义正则表达式模式
+            // 1. 块级公式 $$...$$ (允许换行 (?s))
+            let blockMathPattern = "(?s)\\$\\$.*?\\$\\$"
+            // 2. 行内公式 $...$ (不允许换行)
+            let inlineMathPattern = "\\$[^\\n\\$]+?\\$"
+            // 3. 图片 ![alt](url)
+            let imagePattern = "!\\[.*?\\]\\(.*?\\)"
+            // 4. 链接 [text](url) - 如果你也希望链接整体出现，加上这个
+            let linkPattern = "\\[.*?\\]\\(.*?\\)"
+            
+            // 合并正则 (注意顺序，块级优先于行内)
+            // 这里为了演示，把链接也加上去了，你可以根据需要注释掉 linkPattern
+            let patterns = [blockMathPattern, inlineMathPattern, imagePattern,linkPattern]
+            
+            for pattern in patterns {
+                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+                    let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+                    for match in matches {
+                        ranges.append(match.range)
+                    }
+                }
+            }
+            
+            // 排序并合并重叠区间（虽然正则通常分开写，但为了保险）
+            ranges.sort { $0.location < $1.location }
+            
+            return ranges
         }
-    }
+    // 增加 onStart 参数：通知外部“分词完成，马上开始喷字”
+    // 方法签名中增加 onStart 和 onComplete
+    public func startStreaming(
+            _ text: String,
+            unit: StreamingUnit = .word,
+            unitsPerChunk: Int = 1,
+            interval: TimeInterval = 0.05,
+            autoScrollBottom: Bool = false,
+            onStart: (() -> Void)? = nil,
+            onComplete: (() -> Void)? = nil
+        ) {
+            autoScrollEnabled = autoScrollBottom
+            stopStreaming()
+            isStreaming = true
+            self.onStreamComplete = onComplete
+            // 1. 后台处理：分词 + 原子区间计算
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { return }
+                
+                let fullText = text
+                let tokens = self.tokenize(fullText, unit: unit)
+                
+                // 🔥 新增：预计算所有需要整体输出的 Range
+                let atomicRanges = self.calculateAtomicRanges(in: fullText)
+                
+                DispatchQueue.main.async {
+                    guard self.isStreaming else { return }
+                    
+                    // 准备开始
+                    self.markdown = ""
+                    onStart?()
+                    
+                    self.streamFullText = fullText
+                    self.streamTokens = tokens
+                    self.streamAtomicRanges = atomicRanges // 保存区间
+                    self.streamTokenIndex = 0
+                    
+                    // 启动 Timer
+                    self.streamTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                        self?.appendNextTokensAtomic(count: unitsPerChunk) // 🔥 改用新的 append 方法
+                    }
+                }
+            }
+        }
+    
+    /// 智能追加 Token，支持原子区间跳跃
+        private func appendNextTokensAtomic(count: Int) {
+            guard streamTokenIndex < streamTokens.count else {
+                stopStreaming()
+                // 2. 🔥 触发完成回调 (修复点)
+                onStreamComplete?()
+                
+                // 3. 清空回调防止重复调用（可选，视逻辑而定）
+                onStreamComplete = nil
+                // 触发完成回调（如果有）
+                // 注意：之前的代码这里可能漏了 onComplete 的触发，建议补上
+                return
+            }
+            
+            // 当前 Markdown 的长度（光标位置）
+            let currentLength = (markdown as NSString).length
+            
+            // 1. 检查当前光标是否位于某个原子区间的“起点”
+            // 我们需要找到一个 range，使得 range.location == currentLength
+            if let atomicRange = streamAtomicRanges.first(where: { $0.location == currentLength }) {
+                
+                // 🎯 命中原子区间！
+                // 直接截取这整个区间的内容
+                let fullTextInfo = streamFullText as NSString
+                // 确保 range 不越界（理论上预计算的不会越界，但安全第一）
+                if atomicRange.upperBound <= fullTextInfo.length {
+                    let chunk = fullTextInfo.substring(with: atomicRange)
+                    
+                    // 一次性追加整个公式/图片字符串
+                    markdown += chunk
+                    
+                    // ⏩ 关键：我们需要更新 streamTokenIndex，跳过这些 token
+                    // 因为 tokens 是碎片化的，我们需要计算跳过了多少字符
+                    var skippedLength = 0
+                    let targetLength = atomicRange.length
+                    
+                    // 向前推进 token index，直到跳过的字符总数 >= 原子区间的长度
+                    while streamTokenIndex < streamTokens.count {
+                        let tokenLen = streamTokens[streamTokenIndex].count
+                        skippedLength += tokenLen
+                        streamTokenIndex += 1
+                        
+                        if skippedLength >= targetLength {
+                            break
+                        }
+                    }
+                    
+                    // 处理自动滚动
+                    handleAutoScroll()
+                    return // 本次 Tick 结束，等待下一次 Timer
+                }
+            }
+            
+            // 2. 如果没有命中原子区间，走普通逻辑
+            var nextChunk = ""
+            var tokensAdded = 0
+            
+            // 循环取出 count 个 token
+            while streamTokenIndex < streamTokens.count && tokensAdded < count {
+                let token = streamTokens[streamTokenIndex]
+                
+                // 🛑 二次检查：在普通追加的过程中，会不会“误入”原子区间的内部？
+                // 现在的逻辑是：如果普通追加的 token 开始位置正好是原子区间的起点，我们应该停止普通追加，
+                // 留给下一次 Timer tick 去处理上面的 "if let atomicRange" 逻辑。
+                let nextCursor = currentLength + (nextChunk as NSString).length
+                if streamAtomicRanges.contains(where: { $0.location == nextCursor }) {
+                    // 撞到了原子区间的门口，立即停止，把机会留给下一次循环处理整体输出
+                    break
+                }
+                
+                nextChunk += token
+                streamTokenIndex += 1
+                tokensAdded += 1
+            }
+            
+            markdown += nextChunk
+            handleAutoScroll()
+        }
+        
+        private func handleAutoScroll() {
+            if autoScrollEnabled {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.scrollToBottom(animated: false)
+                }
+            }
+        }
 
     private func tokenize(_ text: String, unit: StreamingUnit) -> [String] {
         switch unit {
@@ -1370,6 +1609,7 @@ public final class MarkdownViewTextKit: UIView {
         streamTimer?.invalidate()
         streamTimer = nil
         isStreaming = false
+        isPausedForDisplay = false  // 重置暂停状态
     }
 
     /// 立即显示全部内容
@@ -1377,6 +1617,48 @@ public final class MarkdownViewTextKit: UIView {
         stopStreaming()
         markdown = streamFullText
         isStreaming = false
+    }
+
+    // MARK: - ⭐️ 暂停/恢复显示 API
+
+    /// 暂停显示更新（停止 UI 刷新，但保留流式状态）
+    /// 适用场景：用户滚动到上方阅读时，避免底部流式输出导致的 UI 闪烁
+    public func pauseDisplayUpdates() {
+        guard isStreaming, !isPausedForDisplay else { return }
+
+        isPausedForDisplay = true
+        // 停止 Timer，避免继续追加 token
+        streamTimer?.invalidate()
+        streamTimer = nil
+        // 注意：不设置 isStreaming = false，保留流式状态
+    }
+
+    /// 恢复显示更新（10倍速追赶）
+    /// 快速流式输出剩余内容，避免一次性渲染卡顿
+    public func resumeDisplayUpdates() {
+        guard isStreaming, isPausedForDisplay else { return }
+
+        isPausedForDisplay = false
+
+        // ⭐️ 计算剩余内容
+        let remainingTokens = streamTokens.count - streamTokenIndex
+
+        if remainingTokens <= 0 {
+            // 已经全部输出完毕
+            isStreaming = false
+            onStreamComplete?()
+            onStreamComplete = nil
+            return
+        }
+
+        // ⭐️ 10倍速追赶（150ms间隔，50个token/次）
+        // 相比暂停前的 15ms/5token，这是 10 倍速
+        let catchUpChunkSize = 50
+        let catchUpInterval: TimeInterval = 0.15
+
+        streamTimer = Timer.scheduledTimer(withTimeInterval: catchUpInterval, repeats: true) { [weak self] _ in
+            self?.appendNextTokensAtomic(count: catchUpChunkSize)
+        }
     }
 
     private func appendNextChunk(chunkSize: Int) {

@@ -22,6 +22,7 @@ public enum MarkdownRenderElement: Equatable {
     case thematicBreak
     case codeBlock(NSAttributedString)
     case image(source: String, altText: String)
+    case latex(String)  // LaTeX 公式
     indirect case details(summary: String, children: [MarkdownRenderElement])
     case rawHTML(String)
 }

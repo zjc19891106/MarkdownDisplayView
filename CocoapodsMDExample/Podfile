@@ -6,6 +6,6 @@ target 'CocoapodsMDExample' do
   use_frameworks!
 
   # 本地pod
-  pod 'MarkdownDisplayKit', :path => '../MarkdownDisplayView/'
+  pod 'MarkdownDisplayKit', :path => '../'
 
 end

@@ -166,7 +166,13 @@ final class MarkdownParser: MarkdownParserProtocol {
             elements.append(.heading(id: id, text: renderHeading(heading)))
             
         case let paragraph as Paragraph:
-            currentTextBuffer.append(renderParagraph(paragraph))
+            // 检测段落中是否包含 LaTeX 公式
+            let paragraphText = paragraph.plainText
+            if paragraphText.contains("$$") || paragraphText.contains("$") {
+                renderParagraphWithLatex(paragraph)
+            } else {
+                currentTextBuffer.append(renderParagraph(paragraph))
+            }
             
         case let codeBlock as CodeBlock:
             flushTextBuffer()
@@ -380,7 +386,72 @@ final class MarkdownParser: MarkdownParserProtocol {
         
         return result
     }
-    
+
+    /// 处理包含 LaTeX 公式的段落
+    private func renderParagraphWithLatex(_ paragraph: Paragraph) {
+        let paragraphText = paragraph.plainText
+
+        // 正则表达式匹配 $$...$$ 和 $...$
+        let displayPattern = #"\$\$(.+?)\$\$"#
+        let inlinePattern = #"\$(.+?)\$"#
+
+        guard let displayRegex = cachedRegex(displayPattern, options: [.dotMatchesLineSeparators]) else {
+            // 如果正则失败，回退到普通渲染
+            currentTextBuffer.append(renderParagraph(paragraph))
+            return
+        }
+
+        // 查找所有块级公式 ($$...$$)
+        let matches = displayRegex.matches(
+            in: paragraphText,
+            range: NSRange(paragraphText.startIndex..., in: paragraphText)
+        )
+
+        if matches.isEmpty {
+            // 没有块级公式，使用普通渲染
+            currentTextBuffer.append(renderParagraph(paragraph))
+            return
+        }
+
+        // 分割段落
+        var lastIndex = paragraphText.startIndex
+
+        for match in matches {
+            // 提取公式内容
+            guard let latexRange = Range(match.range(at: 1), in: paragraphText) else { continue }
+            let latex = String(paragraphText[latexRange])
+
+            // 提取公式前的文本
+            let fullMatchRange = Range(match.range, in: paragraphText)!
+            let beforeText = String(paragraphText[lastIndex..<fullMatchRange.lowerBound])
+
+            // 渲染公式前的文本
+            if !beforeText.isEmpty {
+                let beforeAttr = NSMutableAttributedString(
+                    string: beforeText,
+                    attributes: defaultTextAttributes
+                )
+                currentTextBuffer.append(beforeAttr)
+            }
+
+            // Flush 当前 buffer 并添加 LaTeX 元素
+            flushTextBuffer()
+            elements.append(.latex(latex))
+
+            lastIndex = fullMatchRange.upperBound
+        }
+
+        // 处理最后一个公式后的文本
+        let remainingText = String(paragraphText[lastIndex...])
+        if !remainingText.isEmpty {
+            let remainingAttr = NSMutableAttributedString(
+                string: remainingText + "\n",
+                attributes: defaultTextAttributes
+            )
+            currentTextBuffer.append(remainingAttr)
+        }
+    }
+
     // MARK: - Text
     
     // 在 MarkdownRendererTK2 中添加缓存的 attributes
