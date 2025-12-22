@@ -318,7 +318,7 @@ class ChatMarkdownCell: UITableViewCell {
             text,
             unit: .character,
             unitsPerChunk: 2,
-            interval: 0.055,
+            interval: 0.1,
             autoScrollBottom: false,
 
             // 🟢 onStart: 后台算完了，马上要出字了
