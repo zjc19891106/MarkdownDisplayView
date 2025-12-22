@@ -547,6 +547,7 @@ MarkdownDisplayView is created and maintained by [@zjc19891106](https://github.c
 
 - [swift-markdown](https://github.com/swiftlang/swift-markdown) - Markdown parsing library
 - Apple TextKit 2 - High-performance text rendering framework
+- Gemini3 Pro&Claude&Grok&GPT 
 - All contributors and users
 
 ## 📮 Contact
