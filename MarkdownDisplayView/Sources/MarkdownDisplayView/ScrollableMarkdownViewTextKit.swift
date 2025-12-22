@@ -56,7 +56,9 @@ public final class ScrollableMarkdownViewTextKit: UIScrollView {
     private func setupUI() {
         addSubview(markdownView)
         markdownView.translatesAutoresizingMaskIntoConstraints = false
-        
+        markdownView.setContentHuggingPriority(.required, for: .vertical)
+        markdownView.setContentCompressionResistancePriority(.required, for: .vertical)
+
         NSLayoutConstraint.activate([
             markdownView.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor, constant: 16),
             markdownView.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor, constant: 16),
