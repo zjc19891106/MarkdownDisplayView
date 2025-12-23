@@ -63,6 +63,9 @@ class MarkdownTextViewTK2: UIView {
         constraint.priority = UILayoutPriority(999) 
         constraint.isActive = true
         self.heightConstraint = constraint
+        
+        // ⭐️ 防止被 StackView 压缩
+        self.setContentCompressionResistancePriority(.required, for: .vertical)
     }
     
     private func setupTextKit2() {
@@ -80,11 +83,9 @@ class MarkdownTextViewTK2: UIView {
     // 在 MarkdownTextViewTK2 类中
 
     override var intrinsicContentSize: CGSize {
-        // 移除昂贵的 Fail-Safe 逻辑
-        // 既然外部 controller (MarkdownDisplayView) 已经保证会在 updateContent 后
-        // 显式调用 applyLayout，这里的 calculatedHeight 应该是准确的。
-        // 如果出现 0 高度，说明布局逻辑有漏洞，应该修补调用处，而不是在这里做昂贵的补救。
-        return CGSize(width: UIView.noIntrinsicMetric, height: calculatedHeight)
+        // 直接使用约束值作为 intrinsic size，确保与 Auto Layout 同步
+        // 避免 calculatedHeight 变量在某些时序下滞后的问题
+        return CGSize(width: UIView.noIntrinsicMetric, height: heightConstraint?.constant ?? 0)
     }
 
     func applyLayout(width: CGFloat, force: Bool = false) {
@@ -108,7 +109,18 @@ class MarkdownTextViewTK2: UIView {
             
             // ⭐️ 核心修复：直接更新高度约束
             // 加上一点 buffer (e.g. 1px) 防止精度问题导致的截断
-            let newHeight = ceil(height)
+            var newHeight = ceil(height)
+            
+            // Fallback: 如果 TextKit 2 计算为 0 但有文本，使用 boundingRect 估算
+            if newHeight == 0, let attrText = textContentStorage.attributedString, attrText.length > 0 {
+                let fallbackSize = attrText.boundingRect(
+                    with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    context: nil
+                ).size
+                newHeight = ceil(fallbackSize.height + 1) // +1 buffer
+            }
+
             if heightConstraint?.constant != newHeight {
                 heightConstraint?.constant = newHeight
                 calculatedHeight = newHeight
@@ -168,9 +180,17 @@ class MarkdownTextViewTK2: UIView {
         
         guard let context = UIGraphicsGetCurrentContext() else { return }
         
+        var hasFragments = false
         textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
             fragment.draw(at: fragment.layoutFragmentFrame.origin, in: context)
+            hasFragments = true
             return true
+        }
+        
+        // Fallback: 如果 TextKit 2 没有生成任何片段（但有文本），说明布局引擎在视图隐藏时可能未正确更新
+        // 使用 NSAttributedString 直接绘制以确保内容可见
+        if !hasFragments, let attrText = textContentStorage.attributedString, attrText.length > 0 {
+            attrText.draw(in: rect)
         }
     }
     
@@ -277,13 +297,22 @@ public final class MarkdownViewTextKit: UIView {
     private var streamTimer: Timer?
     private var streamFullText: String = ""
     private var streamCurrentIndex: Int = 0
-    private var isStreaming = true
+    private var isStreaming = true {
+        didSet {
+            if !isStreaming {
+                
+            }
+        }
+    }
 
     private var streamTokens: [String] = []
     private var streamTokenIndex: Int = 0
 
     // ⭐️ 新增：暂停显示控制
     private var isPausedForDisplay: Bool = false
+    
+    // ⭐️ 新增：用户交互锁定标记，防止流式更新打断点击事件处理
+    private var isUserInteractingWithDetails: Bool = false
     
     // 添加属性
     private var tocSectionView: UIView?
@@ -560,16 +589,22 @@ public final class MarkdownViewTextKit: UIView {
             }
 
         case (.details(let oldSummary, let oldChildren), .details(let newSummary, let newChildren)):
-            // 1. 验证视图结构
+            // 🛑 如果用户正在交互，跳过本次 Details 的更新，防止状态重置/冲突
+            if isUserInteractingWithDetails {
+                return true
+            }
+
+            // 1. 验证视图结构 (支持 Content Wrapper 结构)
             guard let containerStack = view as? UIStackView,
                   containerStack.arrangedSubviews.count >= 2,
                   let summaryButton = containerStack.arrangedSubviews[0] as? UIButton,
-                  let contentContainer = containerStack.arrangedSubviews[1] as? UIStackView
+                  let contentWrapper = containerStack.arrangedSubviews[1] as? UIView,
+                  let contentContainer = contentWrapper.subviews.first as? UIStackView
             else { return false }
             
             // 2. 更新 Summary
-            // 保持当前的展开状态符号
-            let isExpanded = !contentContainer.isHidden
+            // 保持当前的展开状态符号 (基于 wrapper 可见性)
+            let isExpanded = !contentWrapper.isHidden
             let prefix = isExpanded ? "▼ " : "▶ "
             if oldSummary != newSummary {
                 summaryButton.setTitle(prefix + newSummary, for: .normal)
@@ -718,7 +753,9 @@ public final class MarkdownViewTextKit: UIView {
             let (newElements, attachments, tocItems, tocSectionId) = renderer.render(processedMarkdown)
 
             let endTime = CFAbsoluteTimeGetCurrent()
-            print("[MarkdownDisplayView] parse took \(endTime - startTime) seconds")
+            if !isStreaming {
+                print("[MarkdownDisplayView] parse took \(endTime - startTime) seconds")
+            }
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -1257,9 +1294,9 @@ public final class MarkdownViewTextKit: UIView {
     ) -> UIView {
         let container = UIStackView()
         container.axis = .vertical
-        container.spacing = 4
+        container.spacing = 0
         container.alignment = .fill
-        container.distribution = .fill  // 添加这行
+        container.distribution = .fill
         container.translatesAutoresizingMaskIntoConstraints = false
         
         let summaryButton = UIButton(type: .system)
@@ -1269,24 +1306,36 @@ public final class MarkdownViewTextKit: UIView {
         summaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .medium)
 //        summaryButton.backgroundColor = configuration.codeBackgroundColor
         summaryButton.layer.cornerRadius = 6
-        summaryButton.configuration?.contentInsets = .init(top: 8, leading: 12, bottom: 8, trailing: 12)
+        summaryButton.configuration?.contentInsets = .init(top: 8, leading: 12, bottom: 20, trailing: 12)
         summaryButton.setContentHuggingPriority(.required, for: .vertical)
         summaryButton.setContentCompressionResistancePriority(.required, for: .vertical)
         container.addArrangedSubview(summaryButton)
         
+        // Wrapper View (Plain UIView to handle hiding cleanly)
+        let contentWrapper = UIView()
+        contentWrapper.isHidden = true
+        contentWrapper.translatesAutoresizingMaskIntoConstraints = false
+        contentWrapper.backgroundColor = configuration.codeBackgroundColor
+        contentWrapper.layer.cornerRadius = 6
+        contentWrapper.layer.masksToBounds = true
+        container.addArrangedSubview(contentWrapper)
+
         let contentContainer = UIStackView()
         contentContainer.axis = .vertical
         contentContainer.spacing = 0
         contentContainer.alignment = .fill
-        contentContainer.distribution = .fill  // 添加这行
-        contentContainer.isHidden = true
+        contentContainer.distribution = .fill
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.layoutMargins = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         contentContainer.isLayoutMarginsRelativeArrangement = true
-        contentContainer.backgroundColor = configuration.codeBackgroundColor
-        contentContainer.layer.cornerRadius = 6
-        contentContainer.layer.masksToBounds = true
-        container.addArrangedSubview(contentContainer)
+        contentWrapper.addSubview(contentContainer)
+        
+        NSLayoutConstraint.activate([
+            contentContainer.topAnchor.constraint(equalTo: contentWrapper.topAnchor),
+            contentContainer.bottomAnchor.constraint(equalTo: contentWrapper.bottomAnchor),
+            contentContainer.leadingAnchor.constraint(equalTo: contentWrapper.leadingAnchor),
+            contentContainer.trailingAnchor.constraint(equalTo: contentWrapper.trailingAnchor)
+        ])
 
         // 🔥 修复：正确计算内容宽度
         // layoutMargins 是 left: 12, right: 12，所以需要减去 24
@@ -1301,58 +1350,107 @@ public final class MarkdownViewTextKit: UIView {
         }
         
         summaryButton.addAction(
-            UIAction { [weak self, weak contentContainer, weak summaryButton] _ in
+            UIAction { [weak self, weak contentWrapper, weak contentContainer, weak summaryButton, weak container] _ in
                 guard let self = self,
+                      let wrapper = contentWrapper,
                       let content = contentContainer,
-                      let btn = summaryButton
+                      let btn = summaryButton,
+                      let containerWrapper = container
                 else { return }
                 
-                let willShow = content.isHidden
+                // 🔒 锁定流式更新，防止状态覆盖
+                self.isUserInteractingWithDetails = true
+                // 1秒后自动解锁，防止永久死锁
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.isUserInteractingWithDetails = false
+                }
+                
+                let willShow = wrapper.isHidden
 
                 // 1. 更新可见性状态
-                content.isHidden = !willShow
-                content.alpha = willShow ? 1 : 0
+                wrapper.isHidden = !willShow
+                wrapper.alpha = willShow ? 1 : 0
                 btn.setTitle((willShow ? "▼ " : "▶ ") + summary, for: .normal)
 
                 // 2. 核心修复逻辑
                 if willShow {
                     // [Expand Flow]
                     
-                    // A. 强制 content stackview 立即布局，获取初步的 frame
-                    // 这对于计算 subviews 的 bounds 很重要
+                    // 恢复子视图优先级
+                    content.arrangedSubviews.forEach {
+                        $0.isHidden = false
+                        $0.setContentCompressionResistancePriority(.required, for: .vertical)
+                    }
+                    
+                    // A. 强制布局
+                    wrapper.layoutIfNeeded()
                     content.layoutIfNeeded()
 
                     // B. 计算实际可用宽度
-                    // 优先使用 self.bounds (如果已经在 Cell 中布局过)
-                    // 否则使用 Screen width fallback
                     let containerWidth = self.bounds.width > 0 ? self.bounds.width : UIScreen.main.bounds.width - 32
-                    // 减去 details 自身的 margin (12+12)
                     let contentWidth = containerWidth - 24 
 
                     // C. 递归强制更新所有子视图的布局
-                    // 这会计算出 MarkdownTextViewTK2 的正确高度并设置 heightConstraint
                     for subview in content.arrangedSubviews {
                         self.recursivelyUpdateLayout(for: subview, width: contentWidth)
                     }
                     
-                    // D. 再次强制 content 布局
-                    // 因为子视图的 heightConstraint 变了，content stackview 需要变大
+                    // D. 再次强制布局
                     content.layoutIfNeeded()
+                    wrapper.layoutIfNeeded()
+                    containerWrapper.layoutIfNeeded()
                     
                 } else {
                     // [Collapse Flow]
                     
-                    // A. 强制 content 立即布局
-                    // 既然 hidden = true，UIStackView 会将其高度视为 0 (或移除出布局)
-                    // 这一步至关重要，它消除了"Ghost Space"
+                    // 隐藏子视图 & 降低优先级
+                    content.arrangedSubviews.forEach {
+                        $0.isHidden = true
+                        $0.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+                    }
+                    
+                    // A. 强制布局
                     content.layoutIfNeeded()
+                    wrapper.layoutIfNeeded()
+                    
+                    // Force invalidation
+                    content.invalidateIntrinsicContentSize()
+                    wrapper.invalidateIntrinsicContentSize()
+                    
+                    // B. 强制外层容器布局
+                    containerWrapper.layoutIfNeeded()
                 }
 
                 // 3. 通知外部 (TableView) 更新
                 self.setNeedsLayout()
-                self.layoutIfNeeded() // 更新 MarkdownDisplayView 自身布局
-                self.invalidateIntrinsicContentSize() // 标记自身大小改变
-                self.notifyHeightChange() // 触发 TableView beginUpdates
+                self.layoutIfNeeded()
+                self.invalidateIntrinsicContentSize()
+                
+                // 🔥 终极修复：不再依赖 systemLayoutSizeFitting，而是直接计算 StackView 的实际高度
+                // 延迟一小段时间等待布局引擎稳定
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    // 强制再次刷新布局
+                    self.contentStackView.layoutIfNeeded()
+                    
+                    // 手动计算高度：遍历所有子视图的 frame
+                    var totalHeight: CGFloat = 0
+                    for subview in self.contentStackView.arrangedSubviews {
+                        if !subview.isHidden {
+                            totalHeight += subview.frame.height
+                        }
+                    }
+                    // 加上 spacing
+                    let visibleCount = self.contentStackView.arrangedSubviews.filter { !$0.isHidden }.count
+                    if visibleCount > 1 {
+                        totalHeight += CGFloat(visibleCount - 1) * self.contentStackView.spacing
+                    }
+                    // 加上 insets (如果有)
+                    totalHeight += self.contentStackView.layoutMargins.top + self.contentStackView.layoutMargins.bottom
+                    
+                    // 强制通知
+                    self.lastReportedHeight = totalHeight
+                    self.onHeightChange?(totalHeight)
+                }
                 
             }, for: .touchUpInside)
         
@@ -1746,8 +1844,11 @@ public final class MarkdownViewTextKit: UIView {
     // 记录上次报告的高度，用于防抖和避免死循环
     private var lastReportedHeight: CGFloat = 0
     
-    private func notifyHeightChange() {
+    private func notifyHeightChange(force: Bool = false) {
         // ⭐️ 强制 StackView 立即更新布局
+        if force {
+            self.contentStackView.invalidateIntrinsicContentSize()
+        }
         self.contentStackView.layoutIfNeeded()
         
         let size = self.contentStackView.systemLayoutSizeFitting(
@@ -1759,7 +1860,8 @@ public final class MarkdownViewTextKit: UIView {
         let newHeight = size.height
         
         // 只有高度变化超过阈值才通知，避免浮点数误差导致的死循环
-        if abs(newHeight - lastReportedHeight) > 0.5 {
+        // 如果 force 为 true，忽略防抖检查
+        if force || abs(newHeight - lastReportedHeight) > 0.5 {
             // print("[MarkdownDisplayView] 📏 Height Changed: \(lastReportedHeight) -> \(newHeight)")
             lastReportedHeight = newHeight
             self.onHeightChange?(newHeight)
@@ -2008,7 +2110,6 @@ public final class MarkdownViewTextKit: UIView {
     public func stopStreaming() {
         streamTimer?.invalidate()
         streamTimer = nil
-        isStreaming = false
         isPausedForDisplay = false  // 重置暂停状态
     }
 

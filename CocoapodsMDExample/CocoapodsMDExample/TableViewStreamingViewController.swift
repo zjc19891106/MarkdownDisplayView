@@ -371,7 +371,6 @@ class ChatMarkdownCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        markdownView.stopStreaming()
         typingIndicator.stopAnimating()
         onContentHeightChanged = nil
         // ⭐️ 重置流式标记
