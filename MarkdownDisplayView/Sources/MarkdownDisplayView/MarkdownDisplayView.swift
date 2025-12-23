@@ -14,7 +14,7 @@ import NaturalLanguage
 
 /// 使用 TextKit 2 的自定义 TextView
 @available(iOS 15.0, *)
-final class MarkdownTextViewTK2: UIView {
+class MarkdownTextViewTK2: UIView {
     
     private let textLayoutManager: NSTextLayoutManager
     private let textContentStorage: NSTextContentStorage
@@ -31,6 +31,7 @@ final class MarkdownTextViewTK2: UIView {
     var onImageTap: ((String) -> Void)?
     
     private var calculatedHeight: CGFloat = 0
+    private var heightConstraint: NSLayoutConstraint?
     
     override init(frame: CGRect) {
         textContentStorage = NSTextContentStorage()
@@ -41,6 +42,7 @@ final class MarkdownTextViewTK2: UIView {
         
         setupTextKit2()
         setupGestures()
+        setupHeightConstraint()
     }
     
     required init?(coder: NSCoder) {
@@ -52,24 +54,70 @@ final class MarkdownTextViewTK2: UIView {
         
         setupTextKit2()
         setupGestures()
+        setupHeightConstraint()
+    }
+    
+    private func setupHeightConstraint() {
+        // 初始化高度约束，优先级略低于 required，允许在极端情况下被压缩（防止冲突），但通常足以撑开
+        let constraint = heightAnchor.constraint(equalToConstant: 0)
+        constraint.priority = UILayoutPriority(999) 
+        constraint.isActive = true
+        self.heightConstraint = constraint
     }
     
     private func setupTextKit2() {
         textContentStorage.addTextLayoutManager(textLayoutManager)
         textLayoutManager.textContainer = textContainer
         textContainer.lineFragmentPadding = 0
-        textContainer.widthTracksTextView = false  // 改为 false
+        textContainer.widthTracksTextView = false
         textContainer.heightTracksTextView = false
-        
-        // 添加这行，防止内容被拉伸
         textContainer.lineBreakMode = .byWordWrapping
         backgroundColor = .clear
         isUserInteractionEnabled = true
-            
-        // 设置 contentMode 防止拉伸
         contentMode = .topLeft
     }
     
+    // 在 MarkdownTextViewTK2 类中
+
+    override var intrinsicContentSize: CGSize {
+        // 移除昂贵的 Fail-Safe 逻辑
+        // 既然外部 controller (MarkdownDisplayView) 已经保证会在 updateContent 后
+        // 显式调用 applyLayout，这里的 calculatedHeight 应该是准确的。
+        // 如果出现 0 高度，说明布局逻辑有漏洞，应该修补调用处，而不是在这里做昂贵的补救。
+        return CGSize(width: UIView.noIntrinsicMetric, height: calculatedHeight)
+    }
+
+    func applyLayout(width: CGFloat, force: Bool = false) {
+        guard width > 0 else { return }
+        
+        let widthChanged = abs(textContainer.size.width - width) > 0.1
+        
+        if widthChanged {
+            textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
+        }
+        
+        if force || widthChanged || calculatedHeight == 0 {
+            textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
+            
+            var height: CGFloat = 0
+            textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
+                let fragmentFrame = fragment.layoutFragmentFrame
+                height = max(height, fragmentFrame.maxY)
+                return true
+            }
+            
+            // ⭐️ 核心修复：直接更新高度约束
+            // 加上一点 buffer (e.g. 1px) 防止精度问题导致的截断
+            let newHeight = ceil(height)
+            if heightConstraint?.constant != newHeight {
+                heightConstraint?.constant = newHeight
+                calculatedHeight = newHeight
+                invalidateIntrinsicContentSize() // 通知系统 update constraints
+                setNeedsDisplay() // ⭐️ 高度变化后强制重绘，防止内容空白
+            }
+        }
+    }
+
     private func setupGestures() {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         addGestureRecognizer(tapGesture)
@@ -83,38 +131,36 @@ final class MarkdownTextViewTK2: UIView {
             setNeedsDisplay()
             return
         }
-        
+
+        // 1. 更新 TextKit 存储
         textContentStorage.attributedString = attributedText
-        layoutText()
-    }
-    
-    private func layoutText() {
-        let width = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-        textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
         
-        textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
-        
-        var height: CGFloat = 0
-        textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
-            let fragmentFrame = fragment.layoutFragmentFrame
-            height = max(height, fragmentFrame.maxY)
-            return true
-        }
-        
-        calculatedHeight = height
-        invalidateIntrinsicContentSize()
+        // 2. 标记需要重绘 (但不立即触发布局，等待外部显式调用 applyLayout 或 layoutSubviews)
+        // 这里的关键是：不要使用 bounds.width 进行猜测性布局，防止"旧宽度"导致的高度跳变
         setNeedsDisplay()
     }
-    
-    override var intrinsicContentSize: CGSize {
-        return CGSize(width: UIView.noIntrinsicMetric, height: calculatedHeight)
+
+    private func layoutText() {
+        // ⭐️ 修复 1: 增加防抖检查。
+        // 如果宽度没有实质性变化（比如布局循环中微小的浮点误差），或者是 0，
+        // 就不要重新触发昂贵的 TextKit 布局，防止覆盖掉外部递归计算出的正确宽度。
+        if bounds.width > 0 && abs(bounds.width - textContainer.size.width) > 0.5 {
+            applyLayout(width: bounds.width, force: false)
+        }
     }
     
     override func layoutSubviews() {
         super.layoutSubviews()
+        
+        // ⭐️ 修复 2: 确保视图有尺寸时触发布局检查
         if textContentStorage.attributedString != nil {
             layoutText()
         }
+        
+        // ⭐️ 修复 3: 强制重绘
+        // 当 StackView 展开时，bounds 从 0 变为有值，但 TextKit 可能需要一个显式的重绘信号
+        // 尤其是在 backgroundColor 为 clear 的情况下
+        setNeedsDisplay()
     }
     
     override func draw(_ rect: CGRect) {
@@ -130,19 +176,13 @@ final class MarkdownTextViewTK2: UIView {
     
     @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
         let location = gesture.location(in: self)
+        guard let textLayoutFragment = textLayoutManager.textLayoutFragment(for: location) else { return }
         
-        // 使用 textLayoutManager 获取点击位置的文本位置
-        guard let textLayoutFragment = textLayoutManager.textLayoutFragment(for: location) else {
-            return
-        }
-        
-        // 将点击坐标转换为 fragment 内的相对坐标
         let locationInFragment = CGPoint(
             x: location.x - textLayoutFragment.layoutFragmentFrame.origin.x,
             y: location.y - textLayoutFragment.layoutFragmentFrame.origin.y
         )
         
-        // 获取点击位置对应的文本位置
         var caretLocation: NSTextLocation?
         textLayoutFragment.textLineFragments.forEach { lineFragment in
             let lineFrame = lineFragment.typographicBounds
@@ -164,25 +204,19 @@ final class MarkdownTextViewTK2: UIView {
         }
         
         guard let location = caretLocation else { return }
-        
-        // 计算在整个文档中的偏移量
         let offset = textLayoutManager.offset(from: textLayoutManager.documentRange.location, to: location)
         
         guard let attributedText = textContentStorage.attributedString,
-              offset >= 0 && offset < attributedText.length else {
-            return
-        }
+              offset >= 0 && offset < attributedText.length else { return }
         
         let attributes = attributedText.attributes(at: offset, effectiveRange: nil)
         
-        // 处理图片点击
         if let attachment = attributes[.attachment] as? MarkdownImageAttachment,
            let urlString = attachment.imageURL {
             onImageTap?(urlString)
             return
         }
         
-        // 处理链接点击
         if let url = attributes[.link] as? URL {
             onLinkTap?(url)
         }
@@ -374,6 +408,253 @@ public final class MarkdownViewTextKit: UIView {
     }
     
     // MARK: - Rendering
+
+    /// ⭐️ 判断元素是否可以复用（不需要删除重建）
+    private func canReuseElement(old: MarkdownRenderElement, new: MarkdownRenderElement) -> Bool {
+        switch (old, new) {
+        case (.attributedText, .attributedText):
+            return true  // 文本类型相同，可以原地更新
+        case (.heading, .heading):
+            return true  // 标题类型相同，即使ID不同也可以更新
+        case (.latex, .latex):
+            return true  // LaTeX类型相同，即使内容不同也可以更新
+        case (.codeBlock, .codeBlock):
+            return true  // 代码块可以原地更新
+        case (.quote(_, let oldLevel), .quote(_, let newLevel)):
+            return oldLevel == newLevel  // 层级相同可复用
+        case (.image, .image):
+            return true  // 图片类型相同，可以重新加载
+        case (.thematicBreak, .thematicBreak):
+            return true
+        case (.table, .table):
+            return false  // 表格比较复杂，暂时不复用
+        case (.details, .details):
+            return true   // 允许复用 Details 视图，以保持展开/收起状态
+        default:
+            return false  // 类型不同，不可复用
+        }
+    }
+
+    /// ⭐️ 尝试原地更新元素
+    /// - Returns: 是否更新成功。如果返回 false，说明视图结构不兼容（例如 LaTeX 需要变更为滚动视图），需要重建。
+    private func updateViewInPlace(_ view: UIView, old: MarkdownRenderElement, new: MarkdownRenderElement, containerWidth: CGFloat) -> Bool {
+        // print("[MarkdownDisplayView] 🔧 updateViewInPlace: old=\(old), new=\(new)")
+
+        switch (old, new) {
+        case (.attributedText(_), .attributedText(let newText)):
+            // 查找 TextKit2 TextView
+            var textView: MarkdownTextViewTK2?
+            if let tv = view as? MarkdownTextViewTK2 {
+                textView = tv
+            } else if let tv = view.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
+                textView = tv
+            }
+
+            if let textView = textView {
+                if textView.attributedText != newText {
+                    // 1. 更新文本
+                    textView.attributedText = newText
+                    textView.linkTextAttributes = [
+                        .foregroundColor: configuration.linkColor,
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                    ]
+                    
+                    // ⭐️ 核心修复：显式指定 containerWidth 进行布局计算
+                    // 之前的 didSet 逻辑使用的是 textView.bounds.width，这可能是旧的或者错误的（例如 Cell 复用时）
+                    // 导致计算出的高度不匹配当前的实际宽度要求 -> 文字被截断
+                    textView.applyLayout(width: containerWidth, force: true)
+                }
+                return true
+            }
+
+        case (.heading(let oldId, _), .heading(let newId, let newText)):
+            // 更新 ID 映射
+            if oldId != newId {
+                if let mappedView = headingViews[oldId], mappedView == view {
+                    headingViews.removeValue(forKey: oldId)
+                    headingViews[newId] = view
+                    if tocSectionId == oldId {
+                        tocSectionId = newId
+                    }
+                }
+            }
+            
+            // 更新文本并强制布局
+            if let textView = view as? MarkdownTextViewTK2 {
+                if textView.attributedText != newText {
+                    textView.attributedText = newText
+                    textView.applyLayout(width: containerWidth, force: true)
+                }
+            } else if let textView = view.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
+                if textView.attributedText != newText {
+                    textView.attributedText = newText
+                    textView.applyLayout(width: containerWidth, force: true)
+                }
+            }
+            return true
+
+        case (.codeBlock(_), .codeBlock(let newText)):
+            if let textView = view.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
+                if textView.attributedText != newText {
+                    textView.attributedText = newText
+                    // CodeBlock padding: leading 12 + trailing 12 = 24
+                    let codeBlockWidth = max(0, containerWidth - 24)
+                    textView.applyLayout(width: codeBlockWidth, force: true)
+                }
+            }
+            return true
+
+        case (.quote(_, let oldLevel), .quote(let newText, let newLevel)):
+            if oldLevel == newLevel,
+               let textView = view.subviews.first?.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
+                if textView.attributedText != newText {
+                    textView.attributedText = newText
+                    // Quote padding calculation:
+                    // Outer container leading: (level - 1) * 20
+                    // Bar width: 4
+                    // TextView leading offset from bar: 12
+                    // TextView trailing offset: 8
+                    // Total reduction = ((level - 1) * 20) + 4 + 12 + 8
+                    let indent = CGFloat(oldLevel - 1) * 20
+                    let padding = indent + 4 + 12 + 8
+                    let quoteWidth = max(0, containerWidth - padding)
+                    textView.applyLayout(width: quoteWidth, force: true)
+                }
+                return true
+            }
+
+        case (.latex, .latex(let newLatex)):
+            // LaTeX 特殊处理：检查是否需要切换 Scroll/Non-Scroll 模式
+            
+            // 1. 计算新内容需要的尺寸
+            let newSize = LatexMathView.calculateSize(latex: newLatex, fontSize: 22, padding: 20)
+            let needsScroll = newSize.width > containerWidth
+            
+            // 2. 检查当前视图结构
+            let isCurrentScrollView = view.subviews.first is UIScrollView
+            
+            // 3. 如果模式不匹配，返回 false (请求重建)
+            if needsScroll != isCurrentScrollView {
+                return false
+            }
+            
+            // 4. 模式匹配，执行更新
+            var mathView: LatexMathView?
+            var scrollView: UIScrollView?
+            
+            if let v = view.subviews.first(where: { $0 is LatexMathView }) as? LatexMathView {
+                mathView = v
+            } else if let sv = view.subviews.first(where: { $0 is UIScrollView }) as? UIScrollView,
+                      let v = sv.subviews.first(where: { $0 is LatexMathView }) as? LatexMathView {
+                scrollView = sv
+                mathView = v
+            }
+            
+            if let mathView = mathView {
+                mathView.latex = newLatex
+                if let scrollView = scrollView {
+                    scrollView.contentSize = newSize
+                    mathView.frame = CGRect(origin: .zero, size: newSize)
+                }
+                return true
+            }
+
+        case (.details(let oldSummary, let oldChildren), .details(let newSummary, let newChildren)):
+            // 1. 验证视图结构
+            guard let containerStack = view as? UIStackView,
+                  containerStack.arrangedSubviews.count >= 2,
+                  let summaryButton = containerStack.arrangedSubviews[0] as? UIButton,
+                  let contentContainer = containerStack.arrangedSubviews[1] as? UIStackView
+            else { return false }
+            
+            // 2. 更新 Summary
+            // 保持当前的展开状态符号
+            let isExpanded = !contentContainer.isHidden
+            let prefix = isExpanded ? "▼ " : "▶ "
+            if oldSummary != newSummary {
+                summaryButton.setTitle(prefix + newSummary, for: .normal)
+            }
+            
+            // 3. 更新 Children (Diff & Patch)
+            // 计算内容宽度 (Details padding: 12+12 = 24)
+            let contentWidth = max(0, containerWidth - 24)
+            
+            var newSubviews: [UIView] = []
+            var consumedOldIndices = Set<Int>()
+            var searchStart = 0
+            let existingSubviews = contentContainer.arrangedSubviews
+            
+            for newChild in newChildren {
+                var foundIndex = -1
+                let searchEnd = min(searchStart + 5, oldChildren.count)
+                
+                for i in searchStart..<searchEnd {
+                    if consumedOldIndices.contains(i) { continue }
+                    if i >= existingSubviews.count { continue }
+                    
+                    let oldChild = oldChildren[i]
+                    if canReuseElement(old: oldChild, new: newChild) {
+                        let candidateView = existingSubviews[i]
+                        if updateViewInPlace(candidateView, old: oldChild, new: newChild, containerWidth: contentWidth) {
+                            foundIndex = i
+                            break
+                        }
+                    }
+                }
+                
+                if foundIndex != -1 {
+                    consumedOldIndices.insert(foundIndex)
+                    if foundIndex == searchStart { searchStart += 1 }
+                    newSubviews.append(existingSubviews[foundIndex])
+                } else {
+                    let newView = createView(for: newChild, containerWidth: contentWidth)
+                    newSubviews.append(newView)
+                }
+            }
+            
+            // Reconcile Subviews
+            for (index, subview) in newSubviews.enumerated() {
+                if index < contentContainer.arrangedSubviews.count {
+                    let current = contentContainer.arrangedSubviews[index]
+                    if current != subview {
+                        contentContainer.insertArrangedSubview(subview, at: index)
+                    }
+                } else {
+                    contentContainer.addArrangedSubview(subview)
+                }
+            }
+            
+            while contentContainer.arrangedSubviews.count > newSubviews.count {
+                contentContainer.arrangedSubviews.last?.removeFromSuperview()
+            }
+            
+            // 如果当前是展开状态，强制子视图重新布局
+            if isExpanded {
+                 for subview in contentContainer.arrangedSubviews {
+                     recursivelyUpdateLayout(for: subview, width: contentWidth)
+                 }
+            }
+            
+            return true
+
+        case (.image(let oldSrc, _), .image(let newSrc, _)):
+            if oldSrc != newSrc {
+                if let imageView = view.subviews.first(where: { $0 is ImageView }) as? ImageView {
+                    imageView.image(with: newSrc, placeHolder: imageView.image)
+                    imageView.accessibilityIdentifier = newSrc
+                }
+            }
+            return true
+            
+        case (.thematicBreak, .thematicBreak):
+            return true
+
+        default:
+            break
+        }
+        
+        return false
+    }
     
     private func scheduleRerender() {
         // ⭐️ 如果暂停显示，跳过渲染
@@ -463,120 +744,109 @@ public final class MarkdownViewTextKit: UIView {
     private func updateViews(newElements: [MarkdownRenderElement], footnotes: [MarkdownFootnote], containerWidth: CGFloat) {
         let startTime = CFAbsoluteTimeGetCurrent()
         
-        // Diff 算法找公共前缀
-        var prefixLength = 0
-        let minCount = min(oldElements.count, newElements.count)
+        var newSubviews: [UIView] = []
+        var consumedOldIndices = Set<Int>()
+        var searchStart = 0
         
-        while prefixLength < minCount {
-            if oldElements[prefixLength] == newElements[prefixLength] {
-                prefixLength += 1
-            } else {
-                break
-            }
-        }
-        
-        // 检查是否可以原地更新
-        var updateInPlace = false
-        if prefixLength < oldElements.count && prefixLength < newElements.count {
-            let oldItem = oldElements[prefixLength]
-            let newItem = newElements[prefixLength]
+        // --- 1. 智能 Diff & Patch ---
+        for newElement in newElements {
+            var foundIndex = -1
             
-            switch (oldItem, newItem) {
-            case (.attributedText(_), .attributedText(let newText)):
-                if let textView = contentStackView.arrangedSubviews[safe: prefixLength] as? MarkdownTextViewTK2 {
-                    textView.attributedText = newText
-                    textView.linkTextAttributes = [
-                        .foregroundColor: configuration.linkColor,
-                        .underlineStyle: NSUnderlineStyle.single.rawValue,
-                    ]
-                    updateInPlace = true
+            // 设置搜索窗口（例如向后看5个元素），处理插入/删除造成的索引偏移
+            let searchEnd = min(searchStart + 5, oldElements.count)
+            
+            for i in searchStart..<searchEnd {
+                if consumedOldIndices.contains(i) { continue }
+                
+                let oldElement = oldElements[i]
+                
+                // 1. 检查类型是否兼容
+                if canReuseElement(old: oldElement, new: newElement) {
+                    // 2. 尝试执行更新 (如果 LaTeX 模式改变，这里会返回 false)
+                    if let candidateView = contentStackView.arrangedSubviews[safe: i],
+                       updateViewInPlace(candidateView, old: oldElement, new: newElement, containerWidth: containerWidth) {
+                        foundIndex = i
+                        break
+                    }
                 }
-                
-            case (.heading(let oldId, _), .heading(let newId, let newText)):
-                if oldId == newId,
-                   let textView = contentStackView.arrangedSubviews[safe: prefixLength] as? MarkdownTextViewTK2 {
-                    textView.attributedText = newText
-                    updateInPlace = true
-                }
-                
-            case (.thematicBreak, .thematicBreak):
-                updateInPlace = true
-                
-            case (.quote(_, let oldLevel), .quote(let newText, let newLevel)):
-                if oldLevel == newLevel,
-                   let quoteView = contentStackView.arrangedSubviews[safe: prefixLength],
-                   let textView = quoteView.subviews.first?.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
-                    textView.attributedText = newText
-                    updateInPlace = true
-                }
-                
-            default:
-                break
             }
-        }
-        
-        // 更新视图
-        let removeStartIndex = updateInPlace ? prefixLength + 1 : prefixLength
-        
-        if removeStartIndex < contentStackView.arrangedSubviews.count {
-            let viewsToRemove = Array(contentStackView.arrangedSubviews[removeStartIndex...])
-            viewsToRemove.forEach { $0.removeFromSuperview() }
-        }
-        
-        // 重建 headingViews 映射
-        var keptHeadings: [String: UIView] = [:]
-        for i in 0..<removeStartIndex {
-            if i < oldElements.count {
-                if case .heading(let id, _) = oldElements[i] {
-                    if let view = contentStackView.arrangedSubviews[safe: i] {
-                        keptHeadings[id] = view
+            
+            if foundIndex != -1 {
+                // ✅ 复用成功
+                consumedOldIndices.insert(foundIndex)
+                // 优化：如果刚好是当前搜索起点，推进起点
+                if foundIndex == searchStart { searchStart += 1 }
+                
+                if let view = contentStackView.arrangedSubviews[safe: foundIndex] {
+                    newSubviews.append(view)
+                }
+            } else {
+                // 🆕 无法复用，创建新视图
+                let newView = createView(for: newElement, containerWidth: containerWidth)
+                newSubviews.append(newView)
+                
+                // 注册目录
+                if case .heading(let id, _) = newElement {
+                    headingViews[id] = newView
+                    if id == tocSectionId {
+                        tocSectionView = newView
                     }
                 }
             }
         }
-        headingViews = keptHeadings
         
-        // 添加新视图
-        let addStartIndex = updateInPlace ? prefixLength + 1 : prefixLength
+        // --- 2. 协调 StackView (Reconcile) ---
+        // 此时 newSubviews 包含了正确的视图顺序（复用的 + 新建的）
+        // 我们需要把 contentStackView 调整成 newSubviews 的样子
         
-        for i in addStartIndex..<newElements.count {
-            let element = newElements[i]
-            let view = createView(for: element, containerWidth: containerWidth)
-            
-            if let textView = view as? MarkdownTextViewTK2,
-               textView.attributedText?.length == 0 {
-                continue
-            }
-            
-            contentStackView.addArrangedSubview(view)
-            
-            if case .heading(let id, _) = element {
-                headingViews[id] = view
-                // 记录目录区域视图
-                if id == tocSectionId {
-                    tocSectionView = view
+        for (index, view) in newSubviews.enumerated() {
+            if index < contentStackView.arrangedSubviews.count {
+                let currentView = contentStackView.arrangedSubviews[index]
+                
+                if currentView != view {
+                    // 视图位置不对，插入正确视图（UIStackView 会自动移动已存在的视图）
+                    contentStackView.insertArrangedSubview(view, at: index)
                 }
+                // 如果 currentView == view，说明位置正确，无需操作
+            } else {
+                // 追加新视图
+                contentStackView.addArrangedSubview(view)
             }
         }
         
-        // 处理脚注
-        if contentStackView.arrangedSubviews.count > newElements.count {
+        // --- 3. 清理多余视图 ---
+        while contentStackView.arrangedSubviews.count > newSubviews.count {
             contentStackView.arrangedSubviews.last?.removeFromSuperview()
         }
         
-        if !footnotes.isEmpty {
-            let footnoteView = createFootnoteView(footnotes: footnotes, width: containerWidth)
-            contentStackView.addArrangedSubview(footnoteView)
+        // --- 4. 脚注处理 ---
+        updateFootnotes(footnotes, width: containerWidth, newElementCount: newElements.count)
+        
+        finishUpdate(newElements: newElements, startTime: startTime)
+    }
+
+    private func updateFootnotes(_ footnotes: [MarkdownFootnote], width: CGFloat, newElementCount: Int) {
+        // 此时 contentStackView 的 subviews 数量应该是 newElementCount (如果不含脚注)
+        // 先移除旧的脚注视图（如果存在）
+        // 简单的逻辑：如果当前 subviews 数量 > newElementCount，说明最后那个是脚注，删掉
+        if contentStackView.arrangedSubviews.count > newElementCount {
+             contentStackView.arrangedSubviews.last?.removeFromSuperview()
         }
         
+        if !footnotes.isEmpty {
+            let footnoteView = createFootnoteView(footnotes: footnotes, width: width)
+            contentStackView.addArrangedSubview(footnoteView)
+        }
+    }
+    
+    private func finishUpdate(newElements: [MarkdownRenderElement], startTime: Double) {
         oldElements = newElements
-        
         loadImages()
         invalidateIntrinsicContentSize()
         notifyHeightChange()
         
-        let endTime = CFAbsoluteTimeGetCurrent()
-        print("[MarkdownDisplayView] UI update took \(endTime - startTime) seconds")
+        // let endTime = CFAbsoluteTimeGetCurrent()
+        // print("[MarkdownDisplayView] UI update took \(endTime - startTime) seconds")
     }
     
     private func createView(for element: MarkdownRenderElement, containerWidth: CGFloat) -> UIView {
@@ -704,7 +974,7 @@ public final class MarkdownViewTextKit: UIView {
             
             let aspectRatio = imageSize.width / imageSize.height
             var targetWidth = min(imageSize.width, width)
-            var targetHeight = targetWidth / aspectRatio
+             var targetHeight = targetWidth / aspectRatio
             
             if targetHeight > self.configuration.imageMaxHeight {
                 targetHeight = self.configuration.imageMaxHeight
@@ -799,62 +1069,79 @@ public final class MarkdownViewTextKit: UIView {
         container.layer.cornerRadius = 8
         container.layer.masksToBounds = true
         container.translatesAutoresizingMaskIntoConstraints = false
-        
+
         let textView = MarkdownTextViewTK2()
         textView.attributedText = attributedString
         textView.backgroundColor = .clear
         textView.translatesAutoresizingMaskIntoConstraints = false
+
+        // 🔥 核心修复:立即应用布局,计算文本实际可用宽度(减去 padding)
+        let codeBlockWidth = max(0, width - 24)  // left 12 + right 12
+        textView.applyLayout(width: codeBlockWidth, force: true)
+
         container.addSubview(textView)
-        
+
+        // 🔥 修复：宽度约束优先级降低，避免与父容器冲突
+        let widthConstraint = container.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.priority = .defaultHigh  // 优先级 750，可被父容器覆盖
+
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: width),
+            widthConstraint,
             textView.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
             textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
         ])
-        
+
         return container
     }
     
-    // MARK: - Text View Creation
-    
-    private func createTextView(
-        with attributedString: NSAttributedString,
-        width: CGFloat,
-        insets: UIEdgeInsets = .zero
-    ) -> UIView {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
+    // MARK: - Text View Creation (修复版)
         
-        let textView = MarkdownTextViewTK2()
-        textView.attributedText = attributedString
-        textView.linkTextAttributes = [
-            .foregroundColor: configuration.linkColor,
-            .underlineStyle: NSUnderlineStyle.single.rawValue,
-        ]
-        textView.onLinkTap = { [weak self] url in
-            self?.handleLinkTap(url)
+        private func createTextView(
+            with attributedString: NSAttributedString,
+            width: CGFloat,
+            insets: UIEdgeInsets = .zero
+        ) -> UIView {
+            let container = UIView()
+            container.translatesAutoresizingMaskIntoConstraints = false
+            
+            let textView = MarkdownTextViewTK2()
+            textView.attributedText = attributedString
+            textView.linkTextAttributes = [
+                .foregroundColor: configuration.linkColor,
+                .underlineStyle: NSUnderlineStyle.single.rawValue,
+            ]
+            textView.onLinkTap = { [weak self] url in
+                self?.handleLinkTap(url)
+            }
+            textView.onImageTap = { [weak self] urlString in
+                self?.onImageTap?(urlString)
+            }
+            textView.translatesAutoresizingMaskIntoConstraints = false
+            
+            // 🔥 核心修复：立即应用布局
+            // 计算文本实际可用的宽度（减去内边距）
+            let contentWidth = width - insets.left - insets.right
+            if contentWidth > 0 {
+                textView.applyLayout(width: contentWidth, force: true)
+            }
+            
+            container.addSubview(textView)
+            
+            NSLayoutConstraint.activate([
+                textView.topAnchor.constraint(equalTo: container.topAnchor, constant: insets.top),
+                textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: insets.left),
+                textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -insets.right),
+                textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -insets.bottom),
+            ])
+            
+            // 保持垂直方向的抗压缩优先级，防止被压缩
+            container.setContentHuggingPriority(.required, for: .vertical)
+            container.setContentCompressionResistancePriority(.required, for: .vertical)
+            
+            return container
         }
-        textView.onImageTap = { [weak self] urlString in
-            self?.onImageTap?(urlString)
-        }
-        textView.translatesAutoresizingMaskIntoConstraints = false
-        
-        container.addSubview(textView)
-        
-        NSLayoutConstraint.activate([
-            textView.topAnchor.constraint(equalTo: container.topAnchor, constant: insets.top),
-            textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: insets.left),
-            textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -insets.right),
-            textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -insets.bottom),
-        ])
-        
-        container.setContentHuggingPriority(.required, for: .vertical)
-        container.setContentCompressionResistancePriority(.required, for: .vertical)
-        
-        return container
-    }
     
     private func handleLinkTap(_ url: URL) {
         // 检查是否是内部锚点链接
@@ -888,45 +1175,53 @@ public final class MarkdownViewTextKit: UIView {
     private func createQuoteView(with attributedString: NSAttributedString, width: CGFloat, level: Int = 1) -> UIView {
         let outerContainer = UIView()
         outerContainer.translatesAutoresizingMaskIntoConstraints = false
-        
+
         let container = UIView()
         container.backgroundColor = UIColor.systemGray6.withAlphaComponent(0.5)
         container.layer.cornerRadius = 4
         container.translatesAutoresizingMaskIntoConstraints = false
         outerContainer.addSubview(container)
-        
+
         // 左侧竖线
         let bar = UIView()
         bar.backgroundColor = configuration.blockquoteBarColor
         bar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(bar)
-        
+
         let textView = MarkdownTextViewTK2()
         textView.attributedText = attributedString
         textView.translatesAutoresizingMaskIntoConstraints = false
+
+        // 🔥 核心修复:立即应用布局,计算引用块文本实际可用宽度
+        // Quote padding: 左缩进 + 竖线 + 文本左边距 + 文本右边距
+        let indent = CGFloat(level - 1) * 20
+        let padding = indent + 4 + 12 + 8  // outerIndent + barWidth + textLeading + textTrailing
+        let quoteWidth = max(0, width - padding)
+        textView.applyLayout(width: quoteWidth, force: true)
+
         container.addSubview(textView)
-        
+
         // 根据层级计算左边距
         let leftIndent = CGFloat(level - 1) * 20
-        
+
         NSLayoutConstraint.activate([
             outerContainer.widthAnchor.constraint(equalToConstant: width),
-            container.topAnchor.constraint(equalTo: outerContainer.topAnchor, constant: level == 1 ? 8 : 4),
+            container.topAnchor.constraint(equalTo: outerContainer.topAnchor, constant: 4),
             container.leadingAnchor.constraint(equalTo: outerContainer.leadingAnchor, constant: leftIndent),
             container.trailingAnchor.constraint(equalTo: outerContainer.trailingAnchor),
             container.bottomAnchor.constraint(equalTo: outerContainer.bottomAnchor),
-            
+
             bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             bar.topAnchor.constraint(equalTo: container.topAnchor),
             bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             bar.widthAnchor.constraint(equalToConstant: 4),
-            
+
             textView.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
             textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             textView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
             textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
         ])
-        
+
         return outerContainer
     }
     
@@ -992,8 +1287,10 @@ public final class MarkdownViewTextKit: UIView {
         contentContainer.layer.cornerRadius = 6
         contentContainer.layer.masksToBounds = true
         container.addArrangedSubview(contentContainer)
-        
-        let contentWidth = width - 16
+
+        // 🔥 修复：正确计算内容宽度
+        // layoutMargins 是 left: 12, right: 12，所以需要减去 24
+        let contentWidth = width - 24
         for child in children {
             let childView = createView(for: child, containerWidth: contentWidth)
             if let textView = childView as? MarkdownTextViewTK2,
@@ -1011,21 +1308,109 @@ public final class MarkdownViewTextKit: UIView {
                 else { return }
                 
                 let willShow = content.isHidden
-                
-                // 先更新状态，不用动画
+
+                // 1. 更新可见性状态
                 content.isHidden = !willShow
                 content.alpha = willShow ? 1 : 0
                 btn.setTitle((willShow ? "▼ " : "▶ ") + summary, for: .normal)
-                
-                // 直接更新布局
+
+                // 2. 核心修复逻辑
+                if willShow {
+                    // [Expand Flow]
+                    
+                    // A. 强制 content stackview 立即布局，获取初步的 frame
+                    // 这对于计算 subviews 的 bounds 很重要
+                    content.layoutIfNeeded()
+
+                    // B. 计算实际可用宽度
+                    // 优先使用 self.bounds (如果已经在 Cell 中布局过)
+                    // 否则使用 Screen width fallback
+                    let containerWidth = self.bounds.width > 0 ? self.bounds.width : UIScreen.main.bounds.width - 32
+                    // 减去 details 自身的 margin (12+12)
+                    let contentWidth = containerWidth - 24 
+
+                    // C. 递归强制更新所有子视图的布局
+                    // 这会计算出 MarkdownTextViewTK2 的正确高度并设置 heightConstraint
+                    for subview in content.arrangedSubviews {
+                        self.recursivelyUpdateLayout(for: subview, width: contentWidth)
+                    }
+                    
+                    // D. 再次强制 content 布局
+                    // 因为子视图的 heightConstraint 变了，content stackview 需要变大
+                    content.layoutIfNeeded()
+                    
+                } else {
+                    // [Collapse Flow]
+                    
+                    // A. 强制 content 立即布局
+                    // 既然 hidden = true，UIStackView 会将其高度视为 0 (或移除出布局)
+                    // 这一步至关重要，它消除了"Ghost Space"
+                    content.layoutIfNeeded()
+                }
+
+                // 3. 通知外部 (TableView) 更新
                 self.setNeedsLayout()
-                self.layoutIfNeeded()
-                self.invalidateIntrinsicContentSize()
-                self.notifyHeightChange()
+                self.layoutIfNeeded() // 更新 MarkdownDisplayView 自身布局
+                self.invalidateIntrinsicContentSize() // 标记自身大小改变
+                self.notifyHeightChange() // 触发 TableView beginUpdates
                 
             }, for: .touchUpInside)
         
         return container
+    }
+    
+    // 递归查找并更新 MarkdownTextViewTK2 布局
+    private func recursivelyUpdateLayout(for view: UIView, width: CGFloat) {
+        var currentWidth = width
+        
+        // 1. 如果遇到 StackView 且启用了 margins，减去 margins (处理嵌套 Details)
+        if let stackView = view as? UIStackView, stackView.isLayoutMarginsRelativeArrangement {
+            currentWidth = max(0, currentWidth - stackView.layoutMargins.left - stackView.layoutMargins.right)
+        }
+        
+        // 2. 如果是 TextKit2 视图，直接应用布局
+        if let textView = view as? MarkdownTextViewTK2 {
+            // 优先使用实际宽度（更准确，支持多级嵌套），防止 layout 尚未完成时的 0 宽
+            if textView.bounds.width > 1.0 {
+                textView.applyLayout(width: textView.bounds.width, force: true)
+                return
+            }
+            
+            // Fallback: 使用递归传递下来的 calculated width
+            // 需要结合 textView 自身的容器 padding 逻辑
+            var availableWidth = currentWidth
+            if let superview = textView.superview {
+                // CodeBlock container
+                if superview.layer.cornerRadius == 8 {
+                    availableWidth = max(0, currentWidth - 24)
+                } 
+                // Quote container
+                else if superview.subviews.contains(where: { $0.backgroundColor == configuration.blockquoteBarColor }) {
+                    // 简化的 Quote padding 计算
+                    let padding: CGFloat = 4 + 12 + 8
+                    availableWidth = max(0, currentWidth - padding)
+                }
+            }
+            
+            textView.applyLayout(width: availableWidth, force: true)
+            return
+        }
+        
+        // 3. 递归查找子视图
+        for subview in view.subviews {
+            recursivelyUpdateLayout(for: subview, width: currentWidth)
+        }
+    }
+
+    /// 强制重绘容器内的所有 TextKit2 视图
+    private func forceRedrawVisibleTextViews(in view: UIView) {
+        if let textView = view as? MarkdownTextViewTK2 {
+            textView.setNeedsDisplay()
+        }
+        
+        for subview in view.subviews {
+            forceRedrawVisibleTextViews(in: subview)
+        }
     }
     
     // MARK: - Table View
@@ -1358,15 +1743,26 @@ public final class MarkdownViewTextKit: UIView {
         notifyHeightChange()
     }
     
+    // 记录上次报告的高度，用于防抖和避免死循环
+    private var lastReportedHeight: CGFloat = 0
+    
     private func notifyHeightChange() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            let size = self.contentStackView.systemLayoutSizeFitting(
-                CGSize(width: self.bounds.width, height: UIView.layoutFittingCompressedSize.height),
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            )
-            self.onHeightChange?(size.height)
+        // ⭐️ 强制 StackView 立即更新布局
+        self.contentStackView.layoutIfNeeded()
+        
+        let size = self.contentStackView.systemLayoutSizeFitting(
+            CGSize(width: self.bounds.width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        
+        let newHeight = size.height
+        
+        // 只有高度变化超过阈值才通知，避免浮点数误差导致的死循环
+        if abs(newHeight - lastReportedHeight) > 0.5 {
+            // print("[MarkdownDisplayView] 📏 Height Changed: \(lastReportedHeight) -> \(newHeight)")
+            lastReportedHeight = newHeight
+            self.onHeightChange?(newHeight)
         }
     }
     
@@ -1383,7 +1779,11 @@ public final class MarkdownViewTextKit: UIView {
     
     public override func layoutSubviews() {
         super.layoutSubviews()
-        invalidateIntrinsicContentSize()
+        
+        // ⭐️ 关键修复：在布局完成后检查高度是否需要修正
+        // 这解决了"初始宽度不准导致高度计算错误"的问题（Chicken & Egg problem）
+        // 通过对比 lastReportedHeight，我们只在真正需要时触发更新，从而避免死循环
+        notifyHeightChange()
     }
     
     //MARK: - streaming method

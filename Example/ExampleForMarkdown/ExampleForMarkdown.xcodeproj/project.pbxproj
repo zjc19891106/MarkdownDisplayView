@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		05FB01022EF56C75003DB405 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FB01012EF56C75003DB405 /* MarkdownDisplayView */; };
+		05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,7 +40,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				05FB01022EF56C75003DB405 /* MarkdownDisplayView in Frameworks */,
+				05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -83,7 +83,7 @@
 			);
 			name = ExampleForMarkdown;
 			packageProductDependencies = (
-				05FB01012EF56C75003DB405 /* MarkdownDisplayView */,
+				05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */,
 			);
 			productName = ExampleForMarkdown;
 			productReference = 05FAF23D2EF0060D00B7F56E /* ExampleForMarkdown.app */;
@@ -114,7 +114,7 @@
 			mainGroup = 05FAF2342EF0060D00B7F56E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				05FB01002EF56C75003DB405 /* XCLocalSwiftPackageReference "../.." */,
+				05FB02F92EF94E24003DB405 /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 05FAF23E2EF0060D00B7F56E /* Products */;
@@ -362,16 +362,15 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		05FB01002EF56C75003DB405 /* XCLocalSwiftPackageReference "../.." */ = {
+		05FB02F92EF94E24003DB405 /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../..;
+			relativePath = ../../../MarkdownDisplayView;
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		05FB01012EF56C75003DB405 /* MarkdownDisplayView */ = {
+		05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 05FB01002EF56C75003DB405 /* XCLocalSwiftPackageReference "../.." */;
 			productName = MarkdownDisplayView;
 		};
 /* End XCSwiftPackageProductDependency section */

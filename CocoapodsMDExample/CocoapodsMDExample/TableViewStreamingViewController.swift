@@ -466,6 +466,7 @@ class TableViewStreamingViewController: UIViewController {
         for (index, msg) in messages.enumerated() {
             if msg.isStreaming {
                 messages[index].isStreaming = false
+                self.isSending = true
                 // 这里假设 Cell 还在屏幕上，可以直接获取并停止
                 let indexPath = IndexPath(row: index, section: 0)
                 if let cell = tableView.cellForRow(at: indexPath) as? ChatMarkdownCell {
@@ -524,6 +525,7 @@ class TableViewStreamingViewController: UIViewController {
                 self.messages[botIndexPath.row].isLoading = false
                 self.messages[botIndexPath.row].isStreaming = true
                 self.messages[botIndexPath.row].content = ""
+                self.isSending = false
                 
                 // --- 获取 Cell ---
                 if let cell = self.tableView.cellForRow(at: botIndexPath) as? ChatMarkdownCell {
@@ -547,6 +549,7 @@ class TableViewStreamingViewController: UIViewController {
 
                         // ⭐️ 关键修复：只在流式输出期间才自动滚动
                         if cell.isStreaming {
+                            self.isSending = false
                             self.scrollToBottom(animated: false)
                         }
                     }
@@ -561,16 +564,19 @@ class TableViewStreamingViewController: UIViewController {
                                     self?.messages[botIndexPath.row].isLoading = false
                                     self?.messages[botIndexPath.row].isStreaming = true
                                     self?.messages[botIndexPath.row].content = ""
+                                    self?.isSending = false
                                 },
                                 completion: { [weak self] in
                                     self?.messages[botIndexPath.row].content = aiResponseText
                                     self?.messages[botIndexPath.row].isStreaming = false
+                                    self?.isSending = true
                                 }
                             )
                 } else {
                     // 如果 Cell 不可见，直接刷新显示最终结果
                     self.messages[botIndexPath.row].content = aiResponseText
                     self.messages[botIndexPath.row].isStreaming = false
+                    self.isSending = true
                     self.tableView.reloadRows(at: [botIndexPath], with: .none)
                 }
             }
@@ -595,7 +601,7 @@ class TableViewStreamingViewController: UIViewController {
     private func startBotResponse() {
         // 1. 先插入一个内容为空的 Bot 消息
         // isStreaming = true 告诉 Cell 不要直接渲染 content，而是等我们手动调用 stream
-        var botMsg = ChatMessage(content: "", isUser: false, isStreaming: true)
+        let botMsg = ChatMessage(content: "", isUser: false, isStreaming: true)
         messages.append(botMsg)
         
         let indexPath = IndexPath(row: messages.count - 1, section: 0)
@@ -630,6 +636,7 @@ class TableViewStreamingViewController: UIViewController {
             // 完成后更新数据源，标记不再 streaming
             self?.messages[indexPath.row].content = self?.demoMarkdown ?? ""
             self?.messages[indexPath.row].isStreaming = false
+            self?.isSending = false
         }
         
         // 为了确保模型数据同步（如果 Cell 复用导致数据丢失），
