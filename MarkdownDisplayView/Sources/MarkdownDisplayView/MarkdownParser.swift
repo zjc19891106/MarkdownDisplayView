@@ -15,6 +15,7 @@ final class MarkdownParser: MarkdownParserProtocol {
     private let containerWidth: CGFloat
     
     private var listDepth = 0
+    private var quoteDepth = 0  // 引用块嵌套深度
     private var orderedListCounters: [Int] = []
     private var isInBlockquote = false
     private var isInCodeBlock = false
@@ -176,17 +177,52 @@ final class MarkdownParser: MarkdownParserProtocol {
             
         case let codeBlock as CodeBlock:
             flushTextBuffer()
-            elements.append(.codeBlock(renderCodeBlock(codeBlock)))
+            
+            let rawCode = codeBlock.code.trimmingCharacters(in: .whitespacesAndNewlines)
+            let lang = codeBlock.language?.lowercased()
+            
+            // Check if it's a LaTeX block (wrapped in $$ or language is math/latex)
+            if rawCode.hasPrefix("$$") && rawCode.hasSuffix("$$") && rawCode.count >= 4 {
+                let startIndex = rawCode.index(rawCode.startIndex, offsetBy: 2)
+                let endIndex = rawCode.index(rawCode.endIndex, offsetBy: -2)
+                let latex = String(rawCode[startIndex..<endIndex])
+                elements.append(.latex(latex))
+            } else if lang == "math" || lang == "latex" {
+                 elements.append(.latex(codeBlock.code))
+            } else {
+                elements.append(.codeBlock(renderCodeBlock(codeBlock)))
+            }
             
         case let blockQuote as BlockQuote:
             flushTextBuffer()
-            renderBlockQuoteElement(blockQuote, level: 1)
+            // 使用 captureElements 捕获引用块内部的所有子元素
+            quoteDepth += 1
+            let children = captureElements {
+                for child in blockQuote.children {
+                    renderBlock(child)
+                }
+            }
+            let currentLevel = quoteDepth
+            quoteDepth -= 1
+            elements.append(.quote(children: children, level: currentLevel))
             
         case let unorderedList as UnorderedList:
-            currentTextBuffer.append(renderUnorderedList(unorderedList))
-            
+            flushTextBuffer()
+            listDepth += 1
+            let items = renderListItems(unorderedList.listItems)
+            let currentLevel = listDepth
+            listDepth -= 1
+            elements.append(.list(items: items, level: currentLevel))
+
         case let orderedList as OrderedList:
-            currentTextBuffer.append(renderOrderedList(orderedList))
+            flushTextBuffer()
+            listDepth += 1
+            orderedListCounters.append(Int(orderedList.startIndex))
+            let items = renderListItems(orderedList.listItems, isOrdered: true)
+            let currentLevel = listDepth
+            orderedListCounters.removeLast()
+            listDepth -= 1
+            elements.append(.list(items: items, level: currentLevel))
             
         case _ as ThematicBreak:
             flushTextBuffer()
@@ -212,7 +248,35 @@ final class MarkdownParser: MarkdownParserProtocol {
             currentTextBuffer = NSMutableAttributedString()
         }
     }
-    
+
+    // MARK: - Core Capture Logic (核心捕获逻辑)
+
+    /// 劫持渲染输出流，捕获闭包期间生成的元素
+    /// 用于实现列表项和引用块的嵌套渲染
+    private func captureElements(action: () -> Void) -> [MarkdownRenderElement] {
+        // 1. 先把当前缓存的纯文本 flush 到原来的 elements 里
+        flushTextBuffer()
+
+        // 2. 备份原来的 elements
+        let originalElements = self.elements
+        // 3. 创建一个新的容器
+        self.elements = []
+
+        // 4. 执行渲染逻辑 (这里面调用的 renderBlock 会把东西加到 self.elements)
+        action()
+
+        // 5. 再次 flush (确保闭包最后遗留的文本被提交)
+        flushTextBuffer()
+
+        // 6. 获取捕获到的 children
+        let capturedChildren = self.elements
+
+        // 7. 恢复原来的环境
+        self.elements = originalElements
+
+        return capturedChildren
+    }
+
     // MARK: - Table Data
     
     private func renderTableData(_ table: Table) -> MarkdownTableData {
@@ -636,81 +700,46 @@ final class MarkdownParser: MarkdownParserProtocol {
         
         return result
     }
-    // MARK: - Block Quote
-    
-    private func renderBlockQuote(_ blockQuote: BlockQuote) -> NSMutableAttributedString {
-        isInBlockquote = true
-        defer { isInBlockquote = false }
-        
-        let result = NSMutableAttributedString()
-        
-        for child in blockQuote.children {
-            result.append(renderMarkup(child))
-        }
-        
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.paragraphSpacing = configuration.paragraphSpacing
-        paragraphStyle.lineSpacing = 4
-        
-        let range = NSRange(location: 0, length: result.length)
-        result.addAttributes([
-            .foregroundColor: configuration.blockquoteTextColor,
-            .font: configuration.blockquoteFont,
-            .paragraphStyle: paragraphStyle,
-        ], range: range)
-        
-        while result.string.hasSuffix("\n") {
-            result.deleteCharacters(in: NSRange(location: result.length - 1, length: 1))
-        }
-        
-        return result
-    }
-    
-    private func renderBlockQuoteElement(_ blockQuote: BlockQuote, level: Int) {
-        var contentBuffer = NSMutableAttributedString()
-        
-        for child in blockQuote.children {
-            if let nestedQuote = child as? BlockQuote {
-                // 先把当前内容作为一个引用元素
-                if contentBuffer.length > 0 {
-                    // 移除末尾换行
-                    while contentBuffer.string.hasSuffix("\n") {
-                        contentBuffer.deleteCharacters(in: NSRange(location: contentBuffer.length - 1, length: 1))
-                    }
-                    elements.append(.quote(contentBuffer, level: level))
-                    contentBuffer = NSMutableAttributedString()
-                }
-                // 递归处理嵌套引用
-                renderBlockQuoteElement(nestedQuote, level: level + 1)
-            } else {
-                isInBlockquote = true
-                contentBuffer.append(renderMarkup(child))
-                isInBlockquote = false
-            }
-        }
-        
-        // 处理剩余内容
-        if contentBuffer.length > 0 {
-            while contentBuffer.string.hasSuffix("\n") {
-                contentBuffer.deleteCharacters(in: NSRange(location: contentBuffer.length - 1, length: 1))
-            }
-            
-            let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.paragraphSpacing = configuration.paragraphSpacing
-            paragraphStyle.lineSpacing = 4
-            
-            contentBuffer.addAttributes([
-                .foregroundColor: configuration.blockquoteTextColor,
-                .font: configuration.blockquoteFont,
-                .paragraphStyle: paragraphStyle,
-            ], range: NSRange(location: 0, length: contentBuffer.length))
-            
-            elements.append(.quote(contentBuffer, level: level))
-        }
-    }
-    
+
     // MARK: - Lists
-    
+
+    /// 通用的列表项渲染方法 - 生成 [ListNodeItem] 支持嵌套
+    private func renderListItems(_ listItems: LazyMapSequence<MarkupChildren, ListItem>, isOrdered: Bool = false) -> [ListNodeItem] {
+        var items: [ListNodeItem] = []
+        var index = orderedListCounters.last ?? 1
+
+        for itemMarkup in listItems {
+            // 1. 决定标记符 (Marker)
+            let marker: String
+            if let checkbox = itemMarkup.checkbox {
+                marker = checkbox == .checked ? "☑" : "☐"
+            } else if isOrdered {
+                marker = "\(index)."
+                index += 1
+            } else {
+                // 无序列表，根据深度决定符号
+                let bullets = ["•", "◦", "▪", "▫"]
+                marker = bullets[min(listDepth - 1, bullets.count - 1)]
+            }
+
+            // 2. 捕获列表项的内容（关键！支持嵌套表格、代码块等）
+            let children = captureElements {
+                for child in itemMarkup.children {
+                    renderBlock(child)
+                }
+            }
+
+            items.append(ListNodeItem(marker: marker, children: children))
+
+            // 更新有序列表计数器
+            if isOrdered && !orderedListCounters.isEmpty {
+                orderedListCounters[orderedListCounters.count - 1] = index
+            }
+        }
+
+        return items
+    }
+
     private func renderUnorderedList(_ unorderedList: UnorderedList) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
         listDepth += 1

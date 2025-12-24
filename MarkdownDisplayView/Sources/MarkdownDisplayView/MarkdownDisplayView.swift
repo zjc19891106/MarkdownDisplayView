@@ -533,24 +533,10 @@ public final class MarkdownViewTextKit: UIView {
             }
             return true
 
-        case (.quote(_, let oldLevel), .quote(let newText, let newLevel)):
-            if oldLevel == newLevel,
-               let textView = view.subviews.first?.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
-                if textView.attributedText != newText {
-                    textView.attributedText = newText
-                    // Quote padding calculation:
-                    // Outer container leading: (level - 1) * 20
-                    // Bar width: 4
-                    // TextView leading offset from bar: 12
-                    // TextView trailing offset: 8
-                    // Total reduction = ((level - 1) * 20) + 4 + 12 + 8
-                    let indent = CGFloat(oldLevel - 1) * 20
-                    let padding = indent + 4 + 12 + 8
-                    let quoteWidth = max(0, containerWidth - padding)
-                    textView.applyLayout(width: quoteWidth, force: true)
-                }
-                return true
-            }
+        // 注意：quote 现在包含复杂的子元素（children: [MarkdownRenderElement]），
+        // 不再支持简单的原地更新，总是需要重建视图
+        case (.quote, .quote):
+            return false  // 请求重建视图
 
         case (.latex, .latex(let newLatex)):
             // LaTeX 特殊处理：检查是否需要切换 Scroll/Non-Scroll 模式
@@ -886,21 +872,25 @@ public final class MarkdownViewTextKit: UIView {
         // print("[MarkdownDisplayView] UI update took \(endTime - startTime) seconds")
     }
     
-    private func createView(for element: MarkdownRenderElement, containerWidth: CGFloat) -> UIView {
+    private func createView(for element: MarkdownRenderElement, containerWidth: CGFloat, suppressTopSpacing: Bool = false, suppressBottomSpacing: Bool = false) -> UIView {
         switch element {
         case .heading(_, let attributedString):
+            let topSpacing = suppressTopSpacing ? 0 : configuration.headingTopSpacing
+            let bottomSpacing = suppressBottomSpacing ? 0 : configuration.headingBottomSpacing
             return createTextView(
                 with: attributedString,
                 width: containerWidth,
-                insets: UIEdgeInsets(top: configuration.headingTopSpacing, left: 0, bottom: configuration.headingBottomSpacing, right: 0)
+                insets: UIEdgeInsets(top: topSpacing, left: 0, bottom: bottomSpacing, right: 0)
             )
 
         case .attributedText(let attributedString):
             if attributedString.length > 0 {
+                let topSpacing = suppressTopSpacing ? 0 : configuration.paragraphTopSpacing
+                let bottomSpacing = suppressBottomSpacing ? 0 : configuration.paragraphBottomSpacing
                 return createTextView(
                     with: attributedString,
                     width: containerWidth,
-                    insets: UIEdgeInsets(top: configuration.paragraphTopSpacing, left: 0, bottom: configuration.paragraphBottomSpacing, right: 0)
+                    insets: UIEdgeInsets(top: topSpacing, left: 0, bottom: bottomSpacing, right: 0)
                 )
             } else {
                 return UIView()
@@ -913,22 +903,126 @@ public final class MarkdownViewTextKit: UIView {
             return createThematicBreakView(width: containerWidth)
         case .codeBlock(let attributedString):
             return createCodeBlockView(with: attributedString, width: containerWidth)
-        case .quote(let attributedString, let level):
-            return createQuoteView(with: attributedString, width: containerWidth, level: level)
+        case .quote(let children, let level):
+            return createQuoteView(children: children, width: containerWidth, level: level)
 
         case .details(let summary, let children):
             return createDetailsView(summary: summary, children: children, width: containerWidth)
         case .image(let source, let altText):
-            return createImageView(source: source, altText: altText, width: containerWidth)
+            let topSpacing = suppressTopSpacing ? 0 : 8.0
+            let bottomSpacing = suppressBottomSpacing ? 0 : 8.0
+            return createImageView(source: source, altText: altText, width: containerWidth, topSpacing: topSpacing, bottomSpacing: bottomSpacing)
         case .latex(let latex):
-            return createLatexView(latex: latex, width: containerWidth)
+            let topSpacing = suppressTopSpacing ? 0 : 8.0
+            let bottomSpacing = suppressBottomSpacing ? 0 : 8.0
+            return createLatexView(latex: latex, width: containerWidth, topSpacing: topSpacing, bottomSpacing: bottomSpacing)
         case .rawHTML:
             return UIView()
+        case .list(items: let list, level: let level):
+            return createListView(items: list, width: containerWidth, level: level)
         }
     }
     
+    // 2. 实现 createListView
+    // MARK: - List View Creation
+
+    private func createListView(items: [ListNodeItem], width: CGFloat, level: Int) -> UIView {
+        // 1. 创建主容器（垂直堆叠每个列表项）
+        let container = UIStackView()
+        container.axis = .vertical
+        container.spacing = 4 // 列表项之间的间距 (Reduced from 8)
+        container.alignment = .fill
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        // 2. 计算缩进和内容宽度
+        // 使用配置项，默认为 20pt
+        let indent: CGFloat = configuration.listIndent
+        // ⭐️ 核心修复：嵌套列表的缩进应该是相对的，而不是基于层级的绝对累加
+        // 因为视图本身已经是嵌套的，每层只需要缩进一个单位即可
+        let currentIndent = (level > 1) ? indent : 0
+        
+        // 子元素可用的最大宽度 = 总宽度 - 当前缩进 - 标记宽度(估算20) - 间距
+        let contentMaxWidth = max(0, width - currentIndent)
+
+        // ⭐️ 预先计算所有标记的最大宽度，确保对齐
+        let maxMarkerWidth: CGFloat = {
+            var maxWidth: CGFloat = 20  // 最小宽度
+            for item in items {
+                let markerText = item.marker as NSString
+                let size = markerText.size(withAttributes: [.font: configuration.bodyFont])
+                maxWidth = max(maxWidth, ceil(size.width) + 4)  // 额外加4pt作为padding
+            }
+            return maxWidth
+        }()
+
+        // 3. 遍历生成每个列表项
+        for item in items {
+            // 每个列表项是一个水平 Stack：[标记] [内容垂直Stack]
+            let itemStack = UIStackView()
+            itemStack.axis = .horizontal
+            itemStack.alignment = .top // 顶部对齐，防止标记跑到中间
+            itemStack.spacing = 4 // (Reduced from 6)
+            itemStack.translatesAutoresizingMaskIntoConstraints = false
+            
+            // A. 标记 (Bullet point or Number)
+            let markerLabel = UILabel()
+            markerLabel.text = item.marker
+            markerLabel.font = configuration.bodyFont // 使用正文字体
+            markerLabel.textColor = configuration.textColor
+            markerLabel.setContentHuggingPriority(.required, for: .horizontal)
+            markerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+            // 使用预计算的最大宽度，确保所有列表项对齐
+            markerLabel.widthAnchor.constraint(equalToConstant: maxMarkerWidth).isActive = true
+            markerLabel.textAlignment = .right // 数字右对齐更好看
+            
+            itemStack.addArrangedSubview(markerLabel)
+            
+            // B. 内容容器 (垂直堆叠：第一行文本 + 后续的代码块/嵌套列表等)
+            let contentStack = UIStackView()
+            contentStack.axis = .vertical
+            contentStack.spacing = 4 // (Reduced from 6)
+            contentStack.alignment = .fill
+            contentStack.translatesAutoresizingMaskIntoConstraints = false
+            
+            // ⭐️ 递归核心：遍历 ListItem 的 children 并创建视图
+            // 实际内容宽度 = 总宽度 - 标记宽度 - 间距
+            let itemContentWidth = contentMaxWidth - maxMarkerWidth - 4
+            
+            for (index, childElement) in item.children.enumerated() {
+                // 递归调用 createView
+                // 如果是列表项的第一个元素，去除顶部间距，以便跟 Marker 对齐
+                let isFirst = (index == 0)
+                // ⭐️ 列表内的元素，默认去除底部间距，完全由 contentStack.spacing 控制
+                let childView = createView(for: childElement, containerWidth: itemContentWidth, suppressTopSpacing: isFirst, suppressBottomSpacing: true)
+                contentStack.addArrangedSubview(childView)
+            }
+            
+            itemStack.addArrangedSubview(contentStack)
+            container.addArrangedSubview(itemStack)
+        }
+        
+        // 4. 外层包装 (处理缩进)
+        let indentWrapper = UIView()
+        indentWrapper.translatesAutoresizingMaskIntoConstraints = false
+        indentWrapper.addSubview(container)
+        
+        // 使用标准约束替代 pinToEdges
+        NSLayoutConstraint.activate([
+            container.topAnchor.constraint(equalTo: indentWrapper.topAnchor),
+            container.bottomAnchor.constraint(equalTo: indentWrapper.bottomAnchor),
+            container.trailingAnchor.constraint(equalTo: indentWrapper.trailingAnchor),
+            // ⭐️ 关键：左边设置缩进
+            container.leadingAnchor.constraint(equalTo: indentWrapper.leadingAnchor, constant: currentIndent),
+            
+            // 宽度约束，确保 wrap content
+            indentWrapper.widthAnchor.constraint(equalToConstant: width)
+        ])
+        
+        return indentWrapper
+    }
     /// 创建 LaTeX 公式视图
-    private func createLatexView(latex: String, width: CGFloat) -> UIView {
+    private func createLatexView(latex: String, width: CGFloat, topSpacing: CGFloat, bottomSpacing: CGFloat) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
 
@@ -953,9 +1047,9 @@ public final class MarkdownViewTextKit: UIView {
 
         // 设置约束
         NSLayoutConstraint.activate([
-            formulaView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            formulaView.topAnchor.constraint(equalTo: container.topAnchor, constant: topSpacing),
             formulaView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            formulaView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            formulaView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -bottomSpacing),
             formulaView.widthAnchor.constraint(equalToConstant: min(formulaSize.width, width)),
             formulaView.heightAnchor.constraint(equalToConstant: formulaSize.height)
         ])
@@ -963,7 +1057,7 @@ public final class MarkdownViewTextKit: UIView {
         return container
     }
 
-    private func createImageView(source: String, altText: String, width: CGFloat) -> UIView {
+    private func createImageView(source: String, altText: String, width: CGFloat, topSpacing: CGFloat, bottomSpacing: CGFloat) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         
@@ -989,9 +1083,9 @@ public final class MarkdownViewTextKit: UIView {
         widthConstraint.priority = .defaultHigh
         
         NSLayoutConstraint.activate([
-            imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: topSpacing),
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -bottomSpacing),
             widthConstraint,
             heightConstraint,
         ])
@@ -1140,11 +1234,17 @@ public final class MarkdownViewTextKit: UIView {
             width: CGFloat,
             insets: UIEdgeInsets = .zero
         ) -> UIView {
+            // ✂️ Trim trailing newlines to prevent extra vertical space
+            let mutableAttrString = NSMutableAttributedString(attributedString: attributedString)
+            while mutableAttrString.string.hasSuffix("\n") {
+                mutableAttrString.deleteCharacters(in: NSRange(location: mutableAttrString.length - 1, length: 1))
+            }
+
             let container = UIView()
             container.translatesAutoresizingMaskIntoConstraints = false
             
             let textView = MarkdownTextViewTK2()
-            textView.attributedText = attributedString
+            textView.attributedText = mutableAttrString
             textView.linkTextAttributes = [
                 .foregroundColor: configuration.linkColor,
                 .underlineStyle: NSUnderlineStyle.single.rawValue,
@@ -1209,7 +1309,8 @@ public final class MarkdownViewTextKit: UIView {
     
     // MARK: - Quote View
     
-    private func createQuoteView(with attributedString: NSAttributedString, width: CGFloat, level: Int = 1) -> UIView {
+    /// 创建引用块视图 - 支持嵌套块级元素（表格、代码块、子列表等）
+    private func createQuoteView(children: [MarkdownRenderElement], width: CGFloat, level: Int = 1) -> UIView {
         let outerContainer = UIView()
         outerContainer.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1225,21 +1326,26 @@ public final class MarkdownViewTextKit: UIView {
         bar.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(bar)
 
-        let textView = MarkdownTextViewTK2()
-        textView.attributedText = attributedString
-        textView.translatesAutoresizingMaskIntoConstraints = false
+        // 创建内容 StackView - 支持垂直堆叠多个子元素
+        let contentStack = UIStackView()
+        contentStack.axis = .vertical
+        contentStack.spacing = 8
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(contentStack)
 
-        // 🔥 核心修复:立即应用布局,计算引用块文本实际可用宽度
-        // Quote padding: 左缩进 + 竖线 + 文本左边距 + 文本右边距
-        let indent = CGFloat(level - 1) * 20
-        let padding = indent + 4 + 12 + 8  // outerIndent + barWidth + textLeading + textTrailing
-        let quoteWidth = max(0, width - padding)
-        textView.applyLayout(width: quoteWidth, force: true)
+        // 每层应用固定的缩进增量，而不是累积值
+        // Level 1: 0pt, Level 2+: 20pt (相对于父级)
+        let leftIndent: CGFloat = (level > 1) ? 20 : 0
 
-        container.addSubview(textView)
+        // 计算子元素可用宽度
+        let padding = leftIndent + 4 + 12 + 8  // leftIndent + barWidth + contentLeading + contentTrailing
+        let contentWidth = max(0, width - padding)
 
-        // 根据层级计算左边距
-        let leftIndent = CGFloat(level - 1) * 20
+        // 递归创建子视图
+        for child in children {
+            let childView = createView(for: child, containerWidth: contentWidth)
+            contentStack.addArrangedSubview(childView)
+        }
 
         NSLayoutConstraint.activate([
             outerContainer.widthAnchor.constraint(equalToConstant: width),
@@ -1253,10 +1359,10 @@ public final class MarkdownViewTextKit: UIView {
             bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             bar.widthAnchor.constraint(equalToConstant: 4),
 
-            textView.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
-            textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            textView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            contentStack.leadingAnchor.constraint(equalTo: bar.trailingAnchor, constant: 12),
+            contentStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            contentStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            contentStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
         ])
 
         return outerContainer

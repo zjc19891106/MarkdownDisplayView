@@ -14,17 +14,27 @@ public struct MarkdownTableData: Equatable {
     var rows: [[NSAttributedString]]
 }
 
+public struct ListNodeItem: Equatable {
+    let marker: String // 例如 "1." 或 "•"
+    let children: [MarkdownRenderElement] // 递归包含其他元素
+    
+    public static func == (lhs: ListNodeItem, rhs: ListNodeItem) -> Bool {
+        return lhs.marker == rhs.marker && lhs.children == rhs.children
+    }
+}
+
 public enum MarkdownRenderElement: Equatable {
     case attributedText(NSAttributedString)
     case table(MarkdownTableData)
     case heading(id: String, text: NSAttributedString)
-    case quote(NSAttributedString, level: Int)  // 添加层级
+    indirect case quote(children: [MarkdownRenderElement], level: Int)  // 支持嵌套块级元素
     case thematicBreak
     case codeBlock(NSAttributedString)
     case image(source: String, altText: String)
     case latex(String)  // LaTeX 公式
     indirect case details(summary: String, children: [MarkdownRenderElement])
     case rawHTML(String)
+    case list(items: [ListNodeItem], level: Int)
 }
 
 // MARK: - MarkdownTOCItemTK2
@@ -113,7 +123,7 @@ public struct MarkdownConfiguration: Sendable {
             footnoteColor: .secondaryLabel,
             paragraphSpacing: 12,
             headingSpacing: 16,
-            listIndent: 24,
+            listIndent: 12,
             codeBlockPadding: 12,
             blockquoteIndent: 16,
             imageMaxHeight: 400,
