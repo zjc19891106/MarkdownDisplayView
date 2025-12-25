@@ -39,7 +39,7 @@
 
 1. 在 Xcode 中打开你的项目
 2. 选择 `File` → `Add Package Dependencies...`
-3. 输入仓库 URL:`https://github.com/你的用户名/MarkdownDisplayView.git`
+3. 输入仓库 URL:`https://github.com/zjc19891106/MarkdownDisplayView.git`
 4. 选择版本并点击 `Add Package`
 
 #### 方式二:Package.swift
@@ -48,7 +48,7 @@
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/你的用户名/MarkdownDisplayView.git", from: "1.0.0")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.3.0")
 ]
 ```
 

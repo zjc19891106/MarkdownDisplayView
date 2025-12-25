@@ -32,14 +32,14 @@ A powerful iOS Markdown rendering component built on TextKit 2, providing smooth
 #### Method 1: Add via Xcode
 1. Open your project in Xcode.
 2. Choose `File` → `Add Package Dependencies...`
-3. Enter the repository URL: `https://github.com/yourusername/MarkdownDisplayView.git`
+3. Enter the repository URL: `https://github.com/zjc19891106/MarkdownDisplayView.git`
 4. Select the version and click `Add Package`.
 
 #### Method 2: In Package.swift
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/yourusername/MarkdownDisplayView.git", from: "1.0.0")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.0.0")
 ]
 ```
 
