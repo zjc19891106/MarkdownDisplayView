@@ -475,7 +475,8 @@ class TypewriterEngine {
         // 5. 普通容器递归
         let isAtomicBlock = (view is UIImageView) || 
                             (view.accessibilityIdentifier == "LatexContainer") || 
-                            (view.accessibilityIdentifier?.hasPrefix("latex_") == true)
+                            (view.accessibilityIdentifier?.hasPrefix("latex_") == true) ||
+                            (view.accessibilityIdentifier == "FootnoteContainer")
         
         if view.subviews.count > 0 && !isAtomicBlock {
             for subview in view.subviews {
@@ -670,6 +671,9 @@ public final class MarkdownViewTextKit: UIView {
         engine.onComplete = { [weak self] in
             // 队列播放完毕的回调
             print("✅ [Typewriter] All animations completed")
+
+            // ⚡️ 流式优化：打字机动画完成后渲染脚注
+            self?.renderFootnotesIfPending()
         }
         // ⚡️ 核心修复：当打字机揭示了新视图（导致高度变化）时，立即通知父视图更新高度
         engine.onLayoutChange = { [weak self] in
@@ -760,6 +764,8 @@ public final class MarkdownViewTextKit: UIView {
     // 脚注优化缓存
     private var currentFootnotes: [MarkdownFootnote] = []
     private var cachedFootnoteView: UIView?
+    /// 标记是否有待渲染的脚注（等待打字机动画完成）
+    private var pendingFootnoteRender = false
 
     // ⚡️ 首屏优化：分批渲染配置
     /// 首屏渲染目标高度（屏幕高度的倍数，默认3屏）
@@ -1588,17 +1594,8 @@ public final class MarkdownViewTextKit: UIView {
             placeholderView = nil
         }
 
-        if isStreaming {
-            // ⚡️ 流式模式：如果预解析完成，只更新显示（不解析）
-            if streamPreParseCompleted {
-                // 预解析已完成，直接更新流式显示
-                updateStreamDisplay()
-            } else {
-                // 预解析未完成，等待（正常情况下不会走到这里）
-                print("⏳ [Stream] Waiting for pre-parse to complete...")
-            }
-            return
-        }
+        // ⚡️ 流式模式优化：改用增量解析，边解析边显示，避免预解析阶段卡顿
+        // 不再提前 return，让流式模式也走增量解析逻辑
 
         let workItem = DispatchWorkItem { [weak self] in
             self?.performRender()
@@ -1637,8 +1634,37 @@ public final class MarkdownViewTextKit: UIView {
 
         // 显示新增的元素
         if targetIndex > streamDisplayedCount {
-            print("📺 [Stream] Showing elements \(streamDisplayedCount)..<\(targetIndex)")
+            // ⚡️ 公式优化：智能控制批次大小，避免一次性渲染太多公式导致卡顿
+            var actualTargetIndex = streamDisplayedCount
+            var elementsInBatch = 0
+            var latexCountInBatch = 0
+            let maxElementsPerBatch = 5  // 普通元素每次最多5个
+            let maxLatexPerBatch = 2     // 公式每次最多2个
+
+            // 智能计算实际显示到哪个索引
             for i in streamDisplayedCount..<targetIndex {
+                let element = streamParsedElements[i]
+                let isLatex = elementTypeString(element).contains("LaTeX")
+
+                // 检查是否超过批次限制
+                if isLatex {
+                    if latexCountInBatch >= maxLatexPerBatch {
+                        break  // 公式数量达到上限，停止本批次
+                    }
+                    latexCountInBatch += 1
+                }
+
+                elementsInBatch += 1
+                actualTargetIndex = i + 1
+
+                // 如果已经达到普通元素上限，停止
+                if elementsInBatch >= maxElementsPerBatch {
+                    break
+                }
+            }
+
+            print("📺 [Stream] Showing elements \(streamDisplayedCount)..<\(actualTargetIndex) (target: \(targetIndex), \(latexCountInBatch) LaTeX in batch)")
+            for i in streamDisplayedCount..<actualTargetIndex {
                 let element = streamParsedElements[i]
                 print("  ├─ Element[\(i)]: \(elementTypeString(element))")
                 let view = createView(for: element, containerWidth: containerWidth)
@@ -1664,13 +1690,22 @@ public final class MarkdownViewTextKit: UIView {
                 }
             }
 
-            streamDisplayedCount = targetIndex
+            streamDisplayedCount = actualTargetIndex
             oldElements = Array(streamParsedElements.prefix(streamDisplayedCount))
             hasChanges = true
-            
+
             // 4. ⭐️ 启动打字机 (如果还没跑的话)
             if enableTypewriterEffect {
                 typewriterEngine.start()
+            }
+
+            // ⚡️ 如果还有未显示的元素，继续触发下一批渲染
+            if actualTargetIndex < targetIndex {
+                // 如果本批次包含公式，延迟时间稍长一点，让公式渲染完成
+                let delay: TimeInterval = latexCountInBatch > 0 ? 0.2 : 0.05
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.updateStreamDisplay()
+                }
             }
         }
 
@@ -1708,30 +1743,11 @@ public final class MarkdownViewTextKit: UIView {
                 }
             }
 
-            // 显示脚注（延迟100ms确保所有元素都已显示）
-            if !streamParsedFootnotes.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    guard let self = self else { return }
-                    let currentViewCount = self.contentStackView.arrangedSubviews.count
-
-                    // 只有在还没有脚注时才添加
-                    if currentViewCount == self.streamParsedElements.count {
-                        print("📝 [Stream Complete] Showing \(self.streamParsedFootnotes.count) footnotes")
-                        self.updateFootnotes(self.streamParsedFootnotes, width: containerWidth, newElementCount: self.streamParsedElements.count)
-                        
-                        if self.enableTypewriterEffect {
-                            // The last view is the footnote view
-                            if let footnoteView = self.contentStackView.arrangedSubviews.last {
-                                // 🆕 脚注也需要先隐藏
-                                footnoteView.isHidden = true
-                                self.typewriterEngine.enqueue(view: footnoteView)
-                                self.typewriterEngine.start()
-                            }
-                        }
-                        
-                        self.notifyHeightChange()
-                    }
-                }
+            // ⚡️ 优化：脚注渲染延迟到打字机动画完成后
+            // 这样可以避免脚注过早出现影响自动滚动
+            if !streamParsedFootnotes.isEmpty && !pendingFootnoteRender {
+                pendingFootnoteRender = true
+                print("🔖 [Footnotes] Deferred rendering (stream complete in updateViews)")
             }
         }
 
@@ -3572,6 +3588,8 @@ public final class MarkdownViewTextKit: UIView {
     private func createFootnoteView(footnotes: [MarkdownFootnote], width: CGFloat) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
+        // ⭐️ 标记为原子块，让打字机引擎将其视为整体淡入，而不是逐字打印
+        container.accessibilityIdentifier = "FootnoteContainer"
         
         let stackView = UIStackView()
         stackView.axis = .vertical
@@ -4091,11 +4109,18 @@ public final class MarkdownViewTextKit: UIView {
                 // 1. 先停止 Timer
                 stopStreaming()
 
-                // 2. 立即设置为非流式模式（关键！）
-                isStreaming = false
+                // 2. ⚡️ 优化：如果有脚注，则延迟结束流式状态，等待打字机动画完成后渲染脚注
+                //    这样可以确保脚注渲染时仍然能触发外部容器的自动滚动
+                if cachedFootnoteView != nil || !streamParsedFootnotes.isEmpty {
+                    pendingFootnoteRender = true
+                    print("🔖 [Footnotes] Deferred rendering until typewriter animations complete")
+                    // ⚡️ 保持 isStreaming = true，直到脚注渲染完成
+                    // 这样外部容器（如 TableView）仍然会自动滚动
+                    return
+                }
 
-                // 3. 渲染脚注（此时 isStreaming = false，不会被跳过）
-                renderFootnotesAfterStreaming()
+                // 3. 没有脚注，立即结束流式模式
+                isStreaming = false
 
                 // 4. 触发完成回调
                 onStreamComplete?()
@@ -4231,6 +4256,25 @@ public final class MarkdownViewTextKit: UIView {
         }
     }
     
+    /// ⚡️ 如果有待渲染的脚注，则渲染（在打字机动画完成后调用）
+    private func renderFootnotesIfPending() {
+        guard pendingFootnoteRender else { return }
+
+        print("🔖 [Footnotes] Rendering deferred footnotes after typewriter animations")
+        pendingFootnoteRender = false
+        renderFootnotesAfterStreaming()
+
+        // ⚡️ 脚注渲染完成，现在可以结束流式状态了
+        if isStreaming {
+            isStreaming = false
+            print("✅ [Stream] Completed after footnote rendering")
+
+            // 触发完成回调
+            onStreamComplete?()
+            onStreamComplete = nil
+        }
+    }
+
     /// 流式渲染完成后渲染脚注
     private func renderFootnotesAfterStreaming() {
         // ⚠️ 必须在主线程调用
@@ -4263,6 +4307,10 @@ public final class MarkdownViewTextKit: UIView {
             // 清理缓存
             cachedFootnoteView = nil
             print("✅ [Footnotes] Cached view added, no flicker")
+
+            // ⚡️ 关键修复：先布局，再通知外部容器高度已改变
+            self.layoutIfNeeded()
+            notifyHeightChange()
             return
         }
 
@@ -4279,6 +4327,10 @@ public final class MarkdownViewTextKit: UIView {
 
         print("🔖 [Footnotes] Rendering \(footnotes.count) footnote(s) after streaming (elementCount=\(elementCount))")
         updateFootnotes(footnotes, width: containerWidth, newElementCount: elementCount)
+
+        // ⚡️ 关键修复：先布局，再通知外部容器高度已改变
+        self.layoutIfNeeded()
+        notifyHeightChange()
     }
 
     /// ⚡️ 在后台预渲染脚注视图（流式开始时调用，避免流式完成时的闪烁）
@@ -4323,10 +4375,9 @@ public final class MarkdownViewTextKit: UIView {
     /// 立即显示全部内容
     public func finishStreaming() {
         stopStreaming()
-        markdown = streamFullText
         isStreaming = false
-        // ⚡️ 结束流式后渲染脚注
-        renderFootnotesAfterStreaming()
+        markdown = streamFullText
+        // 设置 markdown 会触发 scheduleRerender()，自动渲染包括脚注
     }
 
     // MARK: - ⭐️ 暂停/恢复显示 API
@@ -4355,10 +4406,16 @@ public final class MarkdownViewTextKit: UIView {
 
         if remainingTokens <= 0 {
             // 已经全部输出完毕
-            // 1. 先设置为非流式模式
+            // 1. ⚡️ 优化：如果有脚注，则延迟结束流式状态
+            if cachedFootnoteView != nil || !streamParsedFootnotes.isEmpty {
+                pendingFootnoteRender = true
+                print("🔖 [Footnotes] Deferred rendering (resume completed)")
+                // 保持 isStreaming = true，直到脚注渲染完成
+                return
+            }
+
+            // 2. 没有脚注，立即结束流式模式
             isStreaming = false
-            // 2. 渲染脚注（此时 isStreaming = false）
-            renderFootnotesAfterStreaming()
             // 3. 触发完成回调
             onStreamComplete?()
             onStreamComplete = nil
