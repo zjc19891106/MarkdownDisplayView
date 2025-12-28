@@ -35,10 +35,10 @@ Pod::Spec.new do |s|
 
   s.ios.deployment_target = '15.0'
   s.swift_versions = ['5.9']
-  s.source_files = 'MarkdownDisplayView/**/*.swift'  # 递归匹配 MarkdownDisplayView/ 下所有 .swift
+  s.source_files = 'MarkdownDisplayView/Sources/MarkdownDisplayView/**/*.swift'  # 修复：正确的路径
   s.exclude_files = 'MarkdownDisplayView/Tests/**/*', 'MarkdownDisplayView/Package.swift'
 
-  # KaTeX 字体资源
+  # KaTeX 字体资源（路径已经正确）
   s.resource_bundles = {
     'MarkdownDisplayKit' => ['MarkdownDisplayView/Sources/MarkdownDisplayView/Resources/*.ttf']
   }
