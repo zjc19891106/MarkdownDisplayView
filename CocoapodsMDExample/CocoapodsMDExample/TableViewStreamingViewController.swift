@@ -317,7 +317,7 @@ class ChatMarkdownCell: UITableViewCell {
         markdownView.startStreaming(
             text,
             unit: .character,
-            unitsPerChunk: 8,
+            unitsPerChunk: 4,
             interval: 0.06,
             autoScrollBottom: false,
 

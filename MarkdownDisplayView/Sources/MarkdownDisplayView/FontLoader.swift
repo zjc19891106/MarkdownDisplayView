@@ -5,7 +5,8 @@
 //  Created by AI Assistant on 12/19/25.
 //
 
-import UIKit
+import Foundation
+import CoreGraphics
 import CoreText
 
 /// KaTeX 字体加载器

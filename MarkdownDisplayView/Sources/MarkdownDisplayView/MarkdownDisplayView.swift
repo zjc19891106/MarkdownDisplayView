@@ -327,13 +327,359 @@ class MarkdownTextViewTK2: UIView {
     }
 }
 
+// MARK: - Typewriter Support
+@available(iOS 15.0, *)
+extension MarkdownTextViewTK2 {
+    
+    // 缓存一个 mutable copy，避免每次 run loop 都深拷贝整个文档
+    private struct AssociatedKeys {
+        static var cachedMutableString = "cachedMutableString"
+    }
+
+    private var cachedMutableString: NSMutableAttributedString? {
+        get {
+            return objc_getAssociatedObject(self, &AssociatedKeys.cachedMutableString) as? NSMutableAttributedString
+        }
+        set {
+            objc_setAssociatedObject(self, &AssociatedKeys.cachedMutableString, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        }
+    }
+    
+    /// 准备打字机效果：将所有文字设为透明，但保留布局占位
+    func prepareForTypewriter() {
+        guard let attr = textContentStorage.attributedString else { return }
+        
+        // ⚡️ 强制触发布局，确保高度和位置在开始打字前是正确的
+        // 这能防止在 hidden = false 瞬间因为布局未完成而导致的闪烁或跳动
+        layoutIfNeeded()
+        
+        // 初始化缓存
+        let mutable = NSMutableAttributedString(attributedString: attr)
+        let fullRange = NSRange(location: 0, length: attr.length)
+        
+        // 1. 设置全透明
+        mutable.addAttribute(.foregroundColor, value: UIColor.clear, range: fullRange)
+        
+        // 2. ⭐️ 核心修复：移除 .link 属性
+        // 防止系统（或TextKit）强制渲染链接颜色，导致文字无法隐藏
+        mutable.removeAttribute(.link, range: fullRange)
+        
+        cachedMutableString = mutable
+        
+        // 赋值给 storage
+        // 注意：这里 copy 一份是为了避免引用问题，但在 TextKit 2 中，
+        // 给 textContentStorage 赋值本身就会触发某些处理。
+        textContentStorage.attributedString = mutable
+        setNeedsDisplay()
+    }
+    
+    /// 揭示前 N 个字符
+    func revealCharacter(upto index: Int) {
+        guard let originalAttr = attributedText, // 原始带颜色的文本
+              let workingAttr = cachedMutableString,
+              index > 0 else { return }
+        
+        let length = originalAttr.length
+        if index > length { return }
+        
+        // ⚡️ 性能优化：我们不需要重置整个字符串
+        // 我们只需要把 "上一个索引" 到 "当前索引" 之间的字符颜色恢复即可
+        
+        let charIndex = index - 1
+        let range = NSRange(location: charIndex, length: 1)
+        
+        // 从原始文本中获取该位置的属性（包含颜色）
+        let originalAttributes = originalAttr.attributes(at: charIndex, effectiveRange: nil)
+        
+        // ⭐️ 核心修复：必须先移除我们之前设置的 .clear 颜色
+        // 因为 addAttributes 是合并操作，如果 originalAttributes 里没有 foregroundColor（默认黑），
+        // 那么 .clear 就会残留，导致文字依然不可见。
+        workingAttr.removeAttribute(.foregroundColor, range: range)
+        
+        // 应用原始属性
+        workingAttr.addAttributes(originalAttributes, range: range)
+        
+        // 更新显示
+        textContentStorage.attributedString = workingAttr
+        
+        // 强制重绘
+        setNeedsDisplay()
+    }
+}
+
+
+// MARK: - Typewriter Engine
+
+@available(iOS 15.0, *)
+class TypewriterEngine {
+    
+    enum TaskType {
+        case show(UIView)
+        case text(MarkdownTextViewTK2)
+        case label(UILabel)
+        case block(UIView)
+    }
+    
+    private var taskQueue: [TaskType] = []
+    private var isRunning = false
+    private var isPaused = false
+    
+    private var watchdogTimer: Timer?
+    
+    // 追踪当前正在执行的任务，以便超时后强制完成
+    private var currentTask: TaskType?
+    private var currentTaskToken: UUID?
+    
+    // 基础耗时
+    private let baseDuration: TimeInterval = 0.01
+    
+    var onComplete: (() -> Void)?
+    var onLayoutChange: (() -> Void)?
+    
+    func enqueue(view: UIView, isRoot: Bool = true) {
+        if isRoot {
+            // 🆕 根视图初始设为透明，通过 .show 任务渐显
+            view.alpha = 0
+            taskQueue.append(.show(view))
+        }
+        
+        // 1. 文本组件
+        if let textView = view as? MarkdownTextViewTK2 {
+            textView.prepareForTypewriter()
+            taskQueue.append(.text(textView))
+            return
+        }
+        
+        // 2. UILabel
+        if let label = view as? UILabel {
+            label.alpha = 0
+            taskQueue.append(.label(label))
+            return
+        }
+        
+        // 3. UIButton
+        if view is UIButton {
+            view.alpha = 0
+            taskQueue.append(.block(view))
+            return
+        }
+        
+        // 4. StackView 递归
+        if let stackView = view as? UIStackView {
+            for subview in stackView.arrangedSubviews {
+                enqueue(view: subview, isRoot: false)
+            }
+            return
+        }
+        
+        // 5. 普通容器递归
+        let isAtomicBlock = (view is UIImageView) || 
+                            (view.accessibilityIdentifier == "LatexContainer") || 
+                            (view.accessibilityIdentifier?.hasPrefix("latex_") == true)
+        
+        if view.subviews.count > 0 && !isAtomicBlock {
+            for subview in view.subviews {
+                enqueue(view: subview, isRoot: false)
+            }
+            return
+        }
+        
+        // 6. 原子 Block
+        view.alpha = 0
+        taskQueue.append(.block(view))
+    }
+    
+    func start() {
+        if !isRunning {
+            runNext()
+        }
+    }
+    
+    func stop() {
+        isPaused = true
+        watchdogTimer?.invalidate()
+        taskQueue.removeAll()
+        isRunning = false
+        currentTask = nil
+        currentTaskToken = nil
+    }
+    
+    private func feedWatchdog() {
+        watchdogTimer?.invalidate()
+        // ⚡️ 延长看门狗时间到 4.0 秒，防止复杂渲染（如LaTeX）卡顿导致提前结束
+        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
+            print("🐶 [Watchdog] Task timed out, forcing completion...")
+            self?.forceFinishCurrentTask()
+        }
+    }
+    
+    /// 超时强制完成当前任务
+    private func forceFinishCurrentTask() {
+        guard let task = currentTask else {
+            finishCurrentTask()
+            return
+        }
+        
+        switch task {
+        case .text(let textView):
+            if let len = textView.attributedText?.length {
+                textView.revealCharacter(upto: len)
+            }
+        case .block(let view):
+            view.layer.removeAllAnimations()
+            view.alpha = 1.0
+        case .label(let label):
+            label.layer.removeAllAnimations()
+            label.alpha = 1.0
+        case .show(let view):
+            view.layer.removeAllAnimations()
+            view.isHidden = false
+            view.alpha = 1.0
+            onLayoutChange?() // 强制完成时也要通知
+        }
+        
+        finishCurrentTask()
+    }
+    
+    private func runNext() {
+        watchdogTimer?.invalidate()
+        
+        guard !isRunning, !taskQueue.isEmpty else {
+            if taskQueue.isEmpty {
+                currentTask = nil
+                onComplete?()
+            }
+            return
+        }
+        
+        isRunning = true
+        isPaused = false
+        
+        let task = taskQueue.removeFirst()
+        currentTask = task 
+        
+        let token = UUID()
+        currentTaskToken = token
+        
+        feedWatchdog()
+        
+        switch task {
+        case .show(let view):
+            // 🆕 渐显根视图，解决闪烁和突兀感
+            view.isHidden = false
+            view.alpha = 0
+            
+            // ⚡️ 关键修复：视图显示后立即通知高度变化
+            onLayoutChange?()
+            
+            UIView.animate(withDuration: 0.15, animations: {
+                view.alpha = 1.0
+            }) { _ in
+                self.finishCurrentTask()
+            }
+            
+        case .block(let view):
+            UIView.animate(withDuration: 0.2, animations: {
+                view.alpha = 1.0
+            }, completion: { _ in
+                self.finishCurrentTask()
+            })
+            
+        case .label(let label):
+            UIView.animate(withDuration: 0.1, animations: {
+                label.alpha = 1.0
+            }, completion: { _ in
+                self.finishCurrentTask()
+            })
+            
+        case .text(let textView):
+            if textView.attributedText?.length ?? 0 == 0 {
+                textView.revealCharacter(upto: 0)
+                finishCurrentTask()
+            } else {
+                typeNextCharacter(textView, currentIndex: 0, token: token)
+            }
+        }
+    }
+    
+    private func typeNextCharacter(_ textView: MarkdownTextViewTK2, currentIndex: Int, token: UUID) {
+        guard token == self.currentTaskToken else { return }
+        guard !isPaused else { return }
+        
+        feedWatchdog()
+        
+        guard let totalLen = textView.attributedText?.length else {
+            finishCurrentTask()
+            return
+        }
+        
+        if currentIndex >= totalLen {
+            textView.revealCharacter(upto: totalLen)
+            finishCurrentTask()
+            return
+        }
+        
+        let nextIndex = currentIndex + 1
+        textView.revealCharacter(upto: nextIndex)
+        
+        let delay = calculateDelay(at: currentIndex, text: textView.attributedText?.string ?? "")
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.typeNextCharacter(textView, currentIndex: nextIndex, token: token)
+        }
+    }
+    
+    private func finishCurrentTask() {
+        watchdogTimer?.invalidate()
+        if Thread.isMainThread {
+            self._finish()
+        } else {
+            DispatchQueue.main.async { self._finish() }
+        }
+    }
+    
+    private func _finish() {
+        isRunning = false
+        runNext()
+    }
+    
+    private func calculateDelay(at index: Int, text: String) -> TimeInterval {
+        var delay = baseDuration
+        if index < text.count {
+            let charIndex = text.index(text.startIndex, offsetBy: index)
+            let char = text[charIndex]
+            if "，,、".contains(char) { delay += 0.03 }
+            else if "。！？!?;；\n".contains(char) { delay += 0.08 }
+        }
+        return delay + Double.random(in: 0...0.005)
+    }
+}
+
+
 // MARK: - MarkdownViewTextKit
 
 /// TextKit 2 版本的 Markdown 渲染视图
 @available(iOS 15.0, *)
 public final class MarkdownViewTextKit: UIView {
+
     
     // MARK: - Properties
+    
+    private lazy var typewriterEngine: TypewriterEngine = {
+        let engine = TypewriterEngine()
+        engine.onComplete = { [weak self] in
+            // 队列播放完毕的回调
+            print("✅ [Typewriter] All animations completed")
+        }
+        // ⚡️ 核心修复：当打字机揭示了新视图（导致高度变化）时，立即通知父视图更新高度
+        engine.onLayoutChange = { [weak self] in
+            self?.notifyHeightChange()
+        }
+        return engine
+    }()
+
+    // 配置开关
+    public var enableTypewriterEffect: Bool = true
     
     public var configuration: MarkdownConfiguration = .default {
         didSet { scheduleRerender() }
@@ -596,24 +942,81 @@ public final class MarkdownViewTextKit: UIView {
         sv.setContentOffset(CGPoint(x: 0, y: clampedY), animated: true)
     }
     
-    public func generateTOCView() -> UIView {
-        let tocStackView = UIStackView()
-        tocStackView.axis = .vertical
-        tocStackView.spacing = 8
-        tocStackView.alignment = .leading
-        
-        for item in tableOfContents {
-            let button = UIButton(type: .system)
-            let indent = String(repeating: "    ", count: item.level - 1)
-            button.setTitle("\(indent)• \(item.title)", for: .normal)
-            button.titleLabel?.font = configuration.bodyFont
-            button.contentHorizontalAlignment = .left
-            button.tag = tableOfContents.firstIndex(where: { $0.id == item.id }) ?? 0
-            button.addTarget(self, action: #selector(tocItemTapped(_:)), for: .touchUpInside)
-            tocStackView.addArrangedSubview(button)
+    /// 手动播放视图的打字机动画（例如用于目录 TOC）
+    /// - Parameter view: 需要动画显示的视图
+    public func playTypewriterAnimation(for view: UIView) {
+        guard enableTypewriterEffect else {
+            view.isHidden = false
+            return
         }
         
-        return tocStackView
+        // 1. 先隐藏视图，防止闪烁
+        view.isHidden = true
+        
+        // 2. 加入打字机队列
+        typewriterEngine.enqueue(view: view, isRoot: true)
+        
+        // 3. 启动引擎
+        typewriterEngine.start()
+    }
+    
+    public func generateTOCView() -> UIView {
+        // 1. 准备整段富文本
+        let tocTotalAttrString = NSMutableAttributedString()
+        
+        for (index, item) in tableOfContents.enumerated() {
+            // 文本内容
+            let itemText = "• " + item.title + (index < tableOfContents.count - 1 ? "\n" : "")
+            let attrString = NSMutableAttributedString(string: itemText)
+            let range = NSRange(location: 0, length: attrString.length)
+            
+            // 基础样式
+            attrString.addAttribute(.font, value: configuration.bodyFont, range: range)
+            attrString.addAttribute(.foregroundColor, value: configuration.linkColor, range: range)
+            
+            // 链接 (Fake Link) - 确保 ID 被正确编码
+            if let encodedId = item.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+               let url = URL(string: "toc://\(encodedId)") {
+                attrString.addAttribute(.link, value: url, range: range)
+            }
+            
+            // 缩进样式
+            let indent = CGFloat(item.level - 1) * 20.0
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.headIndent = indent + 15 // 悬挂缩进
+            paragraphStyle.firstLineHeadIndent = indent
+            paragraphStyle.paragraphSpacing = 6 // 行间距
+            attrString.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
+            
+            tocTotalAttrString.append(attrString)
+        }
+        
+        // 2. 创建单个 TextView
+        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+        let tocContainer = createTextView(
+            with: tocTotalAttrString,
+            width: containerWidth,
+            insets: UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        )
+        
+        // 3. 绑定点击事件
+        if let textView = tocContainer.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
+            textView.onLinkTap = { [weak self] url in
+                if url.scheme == "toc" {
+                    // 解码 ID 并跳转
+                    let encodedId = url.absoluteString.replacingOccurrences(of: "toc://", with: "")
+                    if let id = encodedId.removingPercentEncoding,
+                       let targetItem = self?.tableOfContents.first(where: { $0.id == id }) {
+                        self?.onTOCItemTap?(targetItem)
+                        self?.scrollToTOCItem(targetItem)
+                    }
+                } else {
+                    self?.onLinkTap?(url)
+                }
+            }
+        }
+        
+        return tocContainer
     }
     
     @objc private func tocItemTapped(_ sender: UIButton) {
@@ -1240,7 +1643,19 @@ public final class MarkdownViewTextKit: UIView {
                 print("  ├─ Element[\(i)]: \(elementTypeString(element))")
                 let view = createView(for: element, containerWidth: containerWidth)
                 view.tag = 1000 + i
-                contentStackView.addArrangedSubview(view)
+                
+                // 3. ⭐️ 核心修改：如果是打字机模式，接管显示逻辑
+                if enableTypewriterEffect {
+                    // 🆕 先隐藏视图（不占高度），等待打字机队列来开启
+                    view.isHidden = true
+                    contentStackView.addArrangedSubview(view)
+                    
+                    // 将视图加入打字机队列 (enqueue 内部会将文字设透明 / Block设不可见)
+                    // enqueue 会自动添加一个 .show 任务来 unhide
+                    typewriterEngine.enqueue(view: view)
+                } else {
+                    contentStackView.addArrangedSubview(view)
+                }
 
                 // 注册 heading
                 if case .heading(let id, _) = element {
@@ -1252,6 +1667,11 @@ public final class MarkdownViewTextKit: UIView {
             streamDisplayedCount = targetIndex
             oldElements = Array(streamParsedElements.prefix(streamDisplayedCount))
             hasChanges = true
+            
+            // 4. ⭐️ 启动打字机 (如果还没跑的话)
+            if enableTypewriterEffect {
+                typewriterEngine.start()
+            }
         }
 
         // ⚡️ 流式结束时，显示所有剩余元素 + 脚注
@@ -1264,7 +1684,14 @@ public final class MarkdownViewTextKit: UIView {
                     let element = streamParsedElements[i]
                     let view = createView(for: element, containerWidth: containerWidth)
                     view.tag = 1000 + i
-                    contentStackView.addArrangedSubview(view)
+                    
+                    if enableTypewriterEffect {
+                        view.isHidden = true
+                        contentStackView.addArrangedSubview(view)
+                        typewriterEngine.enqueue(view: view)
+                    } else {
+                         contentStackView.addArrangedSubview(view)
+                    }
 
                     if case .heading(let id, _) = element {
                         headingViews[id] = view
@@ -1275,6 +1702,10 @@ public final class MarkdownViewTextKit: UIView {
                 streamDisplayedCount = streamParsedElements.count
                 oldElements = streamParsedElements
                 hasChanges = true
+                
+                if enableTypewriterEffect {
+                    typewriterEngine.start()
+                }
             }
 
             // 显示脚注（延迟100ms确保所有元素都已显示）
@@ -1287,6 +1718,17 @@ public final class MarkdownViewTextKit: UIView {
                     if currentViewCount == self.streamParsedElements.count {
                         print("📝 [Stream Complete] Showing \(self.streamParsedFootnotes.count) footnotes")
                         self.updateFootnotes(self.streamParsedFootnotes, width: containerWidth, newElementCount: self.streamParsedElements.count)
+                        
+                        if self.enableTypewriterEffect {
+                            // The last view is the footnote view
+                            if let footnoteView = self.contentStackView.arrangedSubviews.last {
+                                // 🆕 脚注也需要先隐藏
+                                footnoteView.isHidden = true
+                                self.typewriterEngine.enqueue(view: footnoteView)
+                                self.typewriterEngine.start()
+                            }
+                        }
+                        
                         self.notifyHeightChange()
                     }
                 }
@@ -2221,6 +2663,8 @@ public final class MarkdownViewTextKit: UIView {
 
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
+        // ⭐️ 标记为原子 Block，供打字机效果使用
+        container.accessibilityIdentifier = "LatexContainer"
 
         // ⚡️ 使用 LaTeXAttachment
         let attachment = LaTeXAttachment(
