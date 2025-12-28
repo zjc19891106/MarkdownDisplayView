@@ -29,6 +29,9 @@ public final class LaTeXAttachment: NSTextAttachment {
     /// 公式视图的计算尺寸
     private var calculatedSize: CGSize = .zero
 
+    /// 缓存的 ViewProvider 实例（避免重复创建）
+    private var cachedViewProvider: LaTeXAttachmentViewProvider?
+
     /// 初始化 LaTeX 附件
     /// - Parameters:
     ///   - latex: LaTeX 公式字符串
@@ -50,6 +53,12 @@ public final class LaTeXAttachment: NSTextAttachment {
         self.backgroundColor = backgroundColor
 
         super.init(data: nil, ofType: nil)
+        
+        // Set an empty image to prevent the default placeholder icon from appearing
+        self.image = UIImage()
+
+        // ⚡️ 注册 ViewProvider 类
+        self.lineLayoutPadding = 0
 
         // 计算公式尺寸
         self.calculatedSize = LatexMathView.calculateSize(
@@ -57,6 +66,28 @@ public final class LaTeXAttachment: NSTextAttachment {
             fontSize: fontSize,
             padding: padding
         )
+    }
+
+    /// 提供自定义 ViewProvider（缓存实例避免重复创建）
+    public override func viewProvider(
+        for parentView: UIView?,
+        location: any NSTextLocation,
+        textContainer: NSTextContainer?
+    ) -> NSTextAttachmentViewProvider? {
+        // ⚡️ 如果已有缓存实例，直接返回
+        if let cached = cachedViewProvider {
+            return cached
+        }
+
+        // 创建新实例并缓存
+        let provider = LaTeXAttachmentViewProvider(
+            textAttachment: self,
+            parentView: parentView,
+            textLayoutManager: textContainer?.textLayoutManager,
+            location: location
+        )
+        cachedViewProvider = provider
+        return provider
     }
 
     required init?(coder: NSCoder) {
@@ -82,6 +113,9 @@ public final class LaTeXAttachment: NSTextAttachment {
 @available(iOS 15.0, *)
 public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
 
+    /// 标记视图是否已经创建过
+    private var isViewLoaded = false
+
     override public init(
         textAttachment: NSTextAttachment,
         parentView: UIView?,
@@ -98,12 +132,25 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
 
     /// 加载视图
     override public func loadView() {
-        super.loadView()
-        tracksTextAttachmentViewBounds = true
-        guard let attachment = textAttachment as? LaTeXAttachment else {
-            self.view = UIView()
+        // ⚡️ 如果已经加载过，直接返回（避免重复创建）
+        if isViewLoaded {
+            print("⚠️ [LaTeXAttachmentViewProvider] loadView() called again, but view already loaded (复用成功)")
             return
         }
+
+        guard let attachment = textAttachment as? LaTeXAttachment else {
+            super.loadView()
+            return
+        }
+
+        print("✅ [LaTeXAttachmentViewProvider] Creating NEW formula view: \(attachment.latex.prefix(30))...")
+
+        // 计算公式尺寸
+        let formulaSize = LatexMathView.calculateSize(
+            latex: attachment.latex,
+            fontSize: attachment.fontSize,
+            padding: attachment.padding
+        )
 
         // 使用 LatexMathView 的 createScrollableView 方法创建视图
         let formulaView = LatexMathView.createScrollableView(
@@ -114,10 +161,13 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
             backgroundColor: attachment.backgroundColor
         )
 
-        // 设置视图属性
-        formulaView.translatesAutoresizingMaskIntoConstraints = false
-        
+        // ⚡️ 设置明确的 frame（NSTextAttachmentViewProvider 需要）
+        let width = min(formulaSize.width, attachment.maxWidth)
+        formulaView.frame = CGRect(x: 0, y: 0, width: width, height: formulaSize.height)
+
+        // 设置视图并标记已加载
         self.view = formulaView
+        isViewLoaded = true
     }
 
     

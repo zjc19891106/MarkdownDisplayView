@@ -18,7 +18,7 @@ public extension Array {
     
     subscript(safe range: Range<Int>) -> ArraySlice<Element>? {
         if range.startIndex < 0 { return nil }
-        return range.endIndex <= self.endIndex ? self[range.startIndex...range.endIndex]:nil
+        return range.endIndex <= self.endIndex ? self[range] : nil
     }
     
     func jsonString() -> String {

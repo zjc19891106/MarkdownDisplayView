@@ -49,7 +49,7 @@ public struct MarkdownTOCItem {
 // MARK: - MarkdownFootnoteTK2
 
 /// 脚注数据
-struct MarkdownFootnote {
+struct MarkdownFootnote: Equatable {
     let id: String
     let content: String
 }
