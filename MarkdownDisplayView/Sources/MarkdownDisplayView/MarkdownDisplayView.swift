@@ -905,24 +905,26 @@ public final class MarkdownViewTextKit: UIView {
     /// 跳转到文档内的目录区域
     public func backToTableOfContentsSection() {
         guard let view = tocSectionView else { return }
-        
-        var scrollView: UIScrollView?
-        var superview = self.superview
-        while superview != nil {
-            if let sv = superview as? UIScrollView {
-                scrollView = sv
-                break
-            }
-            superview = superview?.superview
-        }
-        
-        guard let sv = scrollView else { return }
-        
+
+        guard let sv = findParentScrollView() else { return }
+
         let frame = view.convert(view.bounds, to: sv)
         let targetY = max(0, frame.origin.y - 12)
         let maxY = max(0, sv.contentSize.height - sv.bounds.height + sv.contentInset.bottom)
-        
+
         sv.setContentOffset(CGPoint(x: 0, y: min(targetY, maxY)), animated: true)
+    }
+
+    /// 查找父级 ScrollView（用于滚动位置补偿等）
+    private func findParentScrollView() -> UIScrollView? {
+        var superview = self.superview
+        while superview != nil {
+            if let sv = superview as? UIScrollView {
+                return sv
+            }
+            superview = superview?.superview
+        }
+        return nil
     }
     
     public func scrollToTOCItem(_ item: MarkdownTOCItem) {
@@ -2065,6 +2067,11 @@ public final class MarkdownViewTextKit: UIView {
             let firstScreenElements = Array(newElements.prefix(firstScreenCutoff))
             let offscreenElements = Array(newElements.dropFirst(firstScreenCutoff))
 
+            // ⭐️ 记录首屏渲染前的估算高度（用于后续校准）
+            let estimatedFirstScreenHeight = firstScreenElements.reduce(CGFloat(0)) { total, element in
+                total + estimateElementHeight(element, containerWidth: containerWidth)
+            }
+
             updateViewsInternal(
                 newElements: firstScreenElements,
                 footnotes: [], // 首屏暂不渲染脚注
@@ -2075,15 +2082,27 @@ public final class MarkdownViewTextKit: UIView {
                 perfStartTime: perfStartTime
             )
 
+            // ⭐️ 关键修复：测量首屏实际高度，计算估算误差
+            contentStackView.layoutIfNeeded()
+            let actualFirstScreenHeight = contentStackView.bounds.height
+            let firstScreenHeightError = actualFirstScreenHeight - estimatedFirstScreenHeight
+
+            print("📏 [FirstScreen] Estimated: \(String(format: "%.1f", estimatedFirstScreenHeight))pt, Actual: \(String(format: "%.1f", actualFirstScreenHeight))pt, Error: \(String(format: "%.1f", firstScreenHeightError))pt")
+
             // ⚡️ 添加占位视图，预留离屏内容空间，避免布局跳动
             let baseEstimatedHeight = offscreenElements.reduce(CGFloat(0)) { total, element in
                 total + estimateElementHeight(element, containerWidth: containerWidth)
             }
 
-            // ⚡️ 增加 10% 缓冲，确保预留空间足够（高度估算可能偏低）
-            let estimatedOffscreenHeight = baseEstimatedHeight * 1.1
+            // ⭐️ 改进：基于首屏误差比例来调整离屏估算
+            // 如果首屏估算偏低10%，假设离屏也会偏低类似比例
+            let errorRatio = estimatedFirstScreenHeight > 0 ? actualFirstScreenHeight / estimatedFirstScreenHeight : 1.0
+            let adjustedOffscreenHeight = baseEstimatedHeight * errorRatio
 
-            print("📦 [Placeholder] Creating placeholder: base=\(String(format: "%.1f", baseEstimatedHeight))pt, buffered=\(String(format: "%.1f", estimatedOffscreenHeight))pt (+10%)")
+            // 额外增加 5% 缓冲（比之前的10%少，因为已经用误差比例校准了）
+            let estimatedOffscreenHeight = adjustedOffscreenHeight * 1.05
+
+            print("📦 [Placeholder] Creating placeholder: base=\(String(format: "%.1f", baseEstimatedHeight))pt, adjusted=\(String(format: "%.1f", adjustedOffscreenHeight))pt (ratio=\(String(format: "%.2f", errorRatio))), final=\(String(format: "%.1f", estimatedOffscreenHeight))pt")
 
             // 创建占位视图
             placeholderView?.removeFromSuperview()
@@ -2107,12 +2126,24 @@ public final class MarkdownViewTextKit: UIView {
 
             // 🎯 阶段2: 延迟渲染离屏元素
             offscreenRenderWorkItem?.cancel()
+
+            // ⭐️ 捕获离屏元素，用于后续追加渲染
+            let offscreenElementsCaptured = offscreenElements
+            let firstScreenCountCaptured = firstScreenCutoff
+
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self = self else { return }
 
                 let offscreenStartTime = CFAbsoluteTimeGetCurrent()
-                print("⚡️ [Offscreen] Rendering remaining \(newElements.count - firstScreenCutoff) elements")
-                print("🎬 [Offscreen] Calling updateViewsInternal() with total \(newElements.count) elements")
+                print("⚡️ [Offscreen] Rendering remaining \(offscreenElementsCaptured.count) elements (append-only mode)")
+
+                // ⭐️ 查找父 ScrollView，用于位置补偿
+                let scrollView = self.findParentScrollView()
+                let scrollOffsetBeforeRender = scrollView?.contentOffset.y ?? 0
+
+                // ⭐️ 记录渲染前的总高度（首屏 + 占位视图）
+                self.contentStackView.layoutIfNeeded()
+                let contentHeightBeforeRender = self.contentStackView.bounds.height
 
                 // ⚡️ 移除占位视图
                 if let placeholder = self.placeholderView {
@@ -2121,18 +2152,64 @@ public final class MarkdownViewTextKit: UIView {
                     self.placeholderView = nil
                 }
 
-                // 渲染完整元素列表（Diff会复用首屏已创建的视图）
-                self.updateViewsInternal(
-                    newElements: newElements,
-                    footnotes: footnotes,
-                    containerWidth: containerWidth,
-                    parseDuration: parseDuration,
-                    startTime: offscreenStartTime,
-                    isBatchFirstScreen: false,
-                    perfStartTime: 0 // 离屏渲染不需要性能监控
-                )
+                // ⭐️ 关键优化：只追加离屏元素，不重新 Diff 首屏元素
+                // 这样首屏视图保持不变，避免布局跳动
+                for (index, element) in offscreenElementsCaptured.enumerated() {
+                    let createStart = CFAbsoluteTimeGetCurrent()
+                    let view = self.createView(for: element, containerWidth: containerWidth)
 
-                print("⚡️ [Offscreen] Completed in \((CFAbsoluteTimeGetCurrent() - offscreenStartTime) * 1000)ms")
+                    // 设置 tag 便于调试
+                    view.tag = 1000 + firstScreenCountCaptured + index
+
+                    self.contentStackView.addArrangedSubview(view)
+
+                    // 注册 heading
+                    if case .heading(let id, _) = element {
+                        self.headingViews[id] = view
+                        if id == self.tocSectionId {
+                            self.tocSectionView = view
+                        }
+                    }
+
+                    let createTime = (CFAbsoluteTimeGetCurrent() - createStart) * 1000
+                    if createTime > 10 {
+                        print("⚡️ [Offscreen] Created \(self.elementTypeString(element)) in \(String(format: "%.1f", createTime))ms")
+                    }
+                }
+
+                // 更新 oldElements 为完整元素列表
+                self.oldElements = newElements
+
+                // 处理脚注
+                if !footnotes.isEmpty {
+                    self.updateFootnotes(footnotes, width: containerWidth, newElementCount: newElements.count)
+                }
+
+                // 加载图片
+                self.loadImages()
+                self.invalidateIntrinsicContentSize()
+
+                // ⭐️ 计算高度差异并补偿滚动位置
+                self.contentStackView.layoutIfNeeded()
+                let contentHeightAfterRender = self.contentStackView.bounds.height
+                let heightDiff = contentHeightAfterRender - contentHeightBeforeRender
+
+                print("📏 [Offscreen] Height before: \(String(format: "%.1f", contentHeightBeforeRender))pt, after: \(String(format: "%.1f", contentHeightAfterRender))pt, diff: \(String(format: "%.1f", heightDiff))pt")
+
+                if let scrollView = scrollView, abs(heightDiff) > 1 {
+                    if scrollOffsetBeforeRender > 50 {
+                        let newOffset = scrollOffsetBeforeRender + heightDiff
+                        print("📍 [Scroll Compensation] Adjusting offset: \(String(format: "%.1f", scrollOffsetBeforeRender)) -> \(String(format: "%.1f", newOffset))")
+                        UIView.performWithoutAnimation {
+                            scrollView.contentOffset.y = max(0, newOffset)
+                        }
+                    } else {
+                        print("📍 [Scroll Compensation] Skipped (user at top, offset=\(String(format: "%.1f", scrollOffsetBeforeRender)))")
+                    }
+                }
+
+                self.notifyHeightChange()
+                print("⚡️ [Offscreen] Completed in \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - offscreenStartTime) * 1000))ms")
             }
             offscreenRenderWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + offscreenRenderDelay, execute: workItem)
@@ -2188,41 +2265,57 @@ public final class MarkdownViewTextKit: UIView {
                 options: [.usesLineFragmentOrigin, .usesFontLeading],
                 context: nil
             ).size
-            return ceil(size.height) + configuration.paragraphSpacing
+            return ceil(size.height) + configuration.paragraphSpacing + configuration.paragraphTopSpacing + configuration.paragraphBottomSpacing
 
-        case .heading:
-            return 40 + configuration.headingSpacing
+        case .heading(_, let text):
+            // ⭐️ 改进：使用实际文本计算高度，而不是固定值
+            let size = text.boundingRect(
+                with: CGSize(width: containerWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                context: nil
+            ).size
+            return ceil(size.height) + configuration.headingTopSpacing + configuration.headingBottomSpacing
 
         case .quote(let children, _):
             // 引用：递归估算子元素 + padding
             let childrenHeight = children.reduce(0) { $0 + estimateElementHeight($1, containerWidth: containerWidth - 40) }
-            return childrenHeight + 20
+            return childrenHeight + 24  // 上下各12pt padding
 
         case .codeBlock(let text):
             let lines = text.string.components(separatedBy: .newlines).count
-            return CGFloat(lines) * 18 + 32
+            return CGFloat(lines) * 20 + 40  // 每行20pt + 上下各20pt padding
 
         case .table(let data):
             // 表格：行数 * 估算行高
             let rowCount = data.rows.count + 1 // +1 for header
-            return CGFloat(rowCount) * 44 + 20
+            return CGFloat(rowCount) * 44 + 24  // 表格额外padding
 
         case .list(let items, _):
-            // 列表：子项数量 * 估算高度
-            return CGFloat(items.count) * 30
+            // ⭐️ 改进：递归估算列表项高度
+            var totalHeight: CGFloat = 0
+            for item in items {
+                // 估算每个列表项的文本高度
+                if !item.children.isEmpty {
+                    totalHeight += item.children.reduce(0) { $0 + estimateElementHeight($1, containerWidth: containerWidth - 32) }
+                } else {
+                    totalHeight += 28  // 最小行高
+                }
+            }
+            return max(totalHeight, CGFloat(items.count) * 28)
 
         case .thematicBreak:
             return 24
 
         case .image:
-            return configuration.imagePlaceholderHeight
+            return configuration.imagePlaceholderHeight + 16  // 上下间距
 
         case .latex:
-            return 60
+            return 80  // LaTeX 公式通常较高
 
         case .details(let _, let children):
-            // 折叠块：只算summary高度（内容默认折叠）
-            return 44
+            // ⭐️ 改进：summary 按钮 + 少量 padding
+            // 折叠状态下只显示按钮，但考虑按钮实际高度
+            return 56  // 40pt 按钮 + 16pt 上下间距
 
         case .rawHTML:
             return 100
