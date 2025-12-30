@@ -8,12 +8,40 @@
 import UIKit
 import Markdown  // 只在这里引入 swift-markdown
 
+// MARK: - 增量解析结果
+/// 增量解析返回的结果
+public struct IncrementalParseResult {
+    /// 安全解析到的字符位置（后续增量解析从此位置继续）
+    public let safePosition: Int
+    /// 新增的渲染元素
+    public let newElements: [MarkdownRenderElement]
+    /// 需要替换的旧元素数量（从末尾开始，用于回溯修正）
+    public let replaceCount: Int
+    /// 是否有未完成的结构（代码块、表格、LaTeX等未闭合）
+    public let hasPendingStructure: Bool
+    /// 未完成结构的类型（用于调试）
+    public let pendingType: PendingStructureType?
+    /// 图片附件
+    public let imageAttachments: [(attachment: MarkdownImageAttachment, urlString: String)]
+    /// TOC 项目
+    public let tocItems: [MarkdownTOCItem]
+}
+
+/// 未完成结构类型
+public enum PendingStructureType: String {
+    case codeBlock = "CodeBlock"      // ``` 未闭合
+    case latexBlock = "LaTeX"         // $$ 未闭合
+    case table = "Table"              // 表格未结束
+    case list = "List"                // 列表可能未完成
+    case quote = "Quote"              // 引用块可能未完成
+}
+
 /// 内部实现类，包含所有 swift-markdown 相关逻辑
 final class MarkdownParser: MarkdownParserProtocol {
-    
+
     private let configuration: MarkdownConfiguration
     private let containerWidth: CGFloat
-    
+
     private var listDepth = 0
     private var quoteDepth = 0  // 引用块嵌套深度
     private var orderedListCounters: [Int] = []
@@ -21,22 +49,305 @@ final class MarkdownParser: MarkdownParserProtocol {
     private var isInCodeBlock = false
     private var isTableHeader = false
     private var headingIndex = 0
-    
+
     private var imageAttachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
-    
+
     private var elements: [MarkdownRenderElement] = []
     private var currentTextBuffer = NSMutableAttributedString()
-    
+
     private static var regexCache: [String: NSRegularExpression] = [:]
     private static let regexLock = NSLock()
-    
+
     private var isInTable = false
-    
+
     private var detectedTOCSectionId: String? = nil
-    
+
     init(configuration: MarkdownConfiguration, containerWidth: CGFloat) {
         self.configuration = configuration
         self.containerWidth = containerWidth
+    }
+
+    // MARK: - 增量解析核心方法
+
+    /// 增量解析 Markdown 文本
+    /// - Parameters:
+    ///   - fullText: 完整的 Markdown 文本（包含新追加的内容）
+    ///   - lastSafePosition: 上次安全解析到的位置
+    ///   - previousElementCount: 之前已解析的元素数量
+    ///   - contextWindowSize: 回溯的上下文窗口大小（字符数）
+    /// - Returns: 增量解析结果
+    func parseIncremental(
+        fullText: String,
+        lastSafePosition: Int,
+        previousElementCount: Int,
+        contextWindowSize: Int = 200
+    ) -> IncrementalParseResult {
+        let nsText = fullText as NSString
+        let fullLength = nsText.length
+
+        // 1. 检测当前文本是否有未完成的结构
+        let pendingInfo = detectPendingStructure(in: fullText)
+
+        // 2. 查找安全断点（从末尾向前搜索）
+        let safePosition = findSafeBreakpoint(
+            in: fullText,
+            from: lastSafePosition,
+            to: fullLength,
+            pendingInfo: pendingInfo
+        )
+
+        // 3. 计算需要解析的范围
+        // 回溯策略：从 lastSafePosition 向前回溯 contextWindowSize，确保捕获跨行结构
+        let parseStart = max(0, lastSafePosition - contextWindowSize)
+        let parseEnd = safePosition
+
+        // 如果没有新内容需要解析
+        if parseEnd <= parseStart {
+            return IncrementalParseResult(
+                safePosition: lastSafePosition,
+                newElements: [],
+                replaceCount: 0,
+                hasPendingStructure: pendingInfo != nil,
+                pendingType: pendingInfo,
+                imageAttachments: [],
+                tocItems: []
+            )
+        }
+
+        // 4. 提取需要解析的片段
+        let parseRange = NSRange(location: parseStart, length: parseEnd - parseStart)
+        let textToparse = nsText.substring(with: parseRange)
+
+        // 5. 执行解析
+        let document = Document(parsing: textToparse)
+        let (parsedElements, attachments) = render(document)
+        let (tocItems, _) = extractHeadings(from: document)
+
+        // 6. 计算需要替换的旧元素数量
+        // 由于回溯了 contextWindowSize，可能需要替换一些旧元素
+        let replaceCount = estimateReplaceCount(
+            previousElementCount: previousElementCount,
+            contextWindowSize: contextWindowSize,
+            parseStart: parseStart,
+            lastSafePosition: lastSafePosition
+        )
+
+        return IncrementalParseResult(
+            safePosition: safePosition,
+            newElements: parsedElements,
+            replaceCount: replaceCount,
+            hasPendingStructure: pendingInfo != nil,
+            pendingType: pendingInfo,
+            imageAttachments: attachments,
+            tocItems: tocItems
+        )
+    }
+
+    /// 检测文本中是否有未完成的结构
+    private func detectPendingStructure(in text: String) -> PendingStructureType? {
+        let nsText = text as NSString
+
+        // 1. 检测未闭合的代码块 ```
+        let codeBlockPattern = "```"
+        var codeBlockCount = 0
+        var searchRange = NSRange(location: 0, length: nsText.length)
+
+        while searchRange.location < nsText.length {
+            let foundRange = nsText.range(of: codeBlockPattern, options: [], range: searchRange)
+            if foundRange.location == NSNotFound { break }
+            codeBlockCount += 1
+            searchRange.location = foundRange.location + foundRange.length
+            searchRange.length = nsText.length - searchRange.location
+        }
+
+        if codeBlockCount % 2 != 0 {
+            return .codeBlock
+        }
+
+        // 2. 检测未闭合的 LaTeX 块 $$
+        let latexBlockPattern = "$$"
+        var latexBlockCount = 0
+        searchRange = NSRange(location: 0, length: nsText.length)
+
+        while searchRange.location < nsText.length {
+            let foundRange = nsText.range(of: latexBlockPattern, options: [], range: searchRange)
+            if foundRange.location == NSNotFound { break }
+            latexBlockCount += 1
+            searchRange.location = foundRange.location + foundRange.length
+            searchRange.length = nsText.length - searchRange.location
+        }
+
+        if latexBlockCount % 2 != 0 {
+            return .latexBlock
+        }
+
+        // 3. 检测未完成的表格（末尾以 | 开头但无空行结束）
+        let lines = text.components(separatedBy: .newlines)
+        if let lastNonEmptyLine = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+            if lastNonEmptyLine.trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                // 检查是否是表格行
+                if lastNonEmptyLine.contains("|") && !text.hasSuffix("\n\n") {
+                    return .table
+                }
+            }
+        }
+
+        // 4. 检测末尾是否是列表或引用块（可能未完成）
+        if let lastLine = lines.last?.trimmingCharacters(in: .whitespaces) {
+            // 列表项
+            if lastLine.hasPrefix("- ") || lastLine.hasPrefix("* ") ||
+               lastLine.hasPrefix("+ ") || lastLine.first?.isNumber == true {
+                if !text.hasSuffix("\n") {
+                    return .list
+                }
+            }
+            // 引用块
+            if lastLine.hasPrefix(">") && !text.hasSuffix("\n\n") {
+                return .quote
+            }
+        }
+
+        return nil
+    }
+
+    /// 查找安全断点位置
+    private func findSafeBreakpoint(
+        in text: String,
+        from: Int,
+        to: Int,
+        pendingInfo: PendingStructureType?
+    ) -> Int {
+        let nsText = text as NSString
+
+        // 如果有未完成的结构，需要找到该结构开始的位置
+        if let pending = pendingInfo {
+            switch pending {
+            case .codeBlock:
+                // 找到最后一个未闭合的 ``` 的位置
+                if let lastCodeBlockStart = findLastUnmatchedCodeBlock(in: text) {
+                    return lastCodeBlockStart
+                }
+            case .latexBlock:
+                // 找到最后一个未闭合的 $$ 的位置
+                if let lastLatexStart = findLastUnmatchedLatex(in: text) {
+                    return lastLatexStart
+                }
+            case .table:
+                // 找到表格开始的位置（最后一个空行之后）
+                if let tableStart = findTableStart(in: text) {
+                    return tableStart
+                }
+            case .list, .quote:
+                // 找到最后一个空行之后的位置
+                if let lastEmptyLine = findLastEmptyLinePosition(in: text) {
+                    return lastEmptyLine
+                }
+            }
+        }
+
+        // 没有未完成的结构，返回文本末尾
+        // 但如果末尾不是换行符，回退到最后一个完整行
+        if !text.hasSuffix("\n") {
+            if let lastNewline = text.lastIndex(of: "\n") {
+                return text.distance(from: text.startIndex, to: lastNewline) + 1
+            }
+        }
+
+        return to
+    }
+
+    /// 找到最后一个未匹配的代码块开始位置
+    private func findLastUnmatchedCodeBlock(in text: String) -> Int? {
+        let pattern = "```"
+        var positions: [Int] = []
+        var searchStart = text.startIndex
+
+        while let range = text.range(of: pattern, range: searchStart..<text.endIndex) {
+            let position = text.distance(from: text.startIndex, to: range.lowerBound)
+            positions.append(position)
+            searchStart = range.upperBound
+        }
+
+        // 奇数个 ```，返回最后一个的位置
+        if positions.count % 2 != 0, let last = positions.last {
+            return last
+        }
+        return nil
+    }
+
+    /// 找到最后一个未匹配的 LaTeX 块开始位置
+    private func findLastUnmatchedLatex(in text: String) -> Int? {
+        let pattern = "$$"
+        var positions: [Int] = []
+        var searchStart = text.startIndex
+
+        while let range = text.range(of: pattern, range: searchStart..<text.endIndex) {
+            let position = text.distance(from: text.startIndex, to: range.lowerBound)
+            positions.append(position)
+            searchStart = range.upperBound
+        }
+
+        if positions.count % 2 != 0, let last = positions.last {
+            return last
+        }
+        return nil
+    }
+
+    /// 找到表格开始的位置
+    private func findTableStart(in text: String) -> Int? {
+        let lines = text.components(separatedBy: .newlines)
+        var currentPosition = 0
+        var tableStartPosition: Int? = nil
+
+        for (index, line) in lines.enumerated() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.isEmpty {
+                // 空行，重置表格开始位置
+                tableStartPosition = nil
+            } else if trimmed.hasPrefix("|") && trimmed.contains("|") {
+                // 表格行
+                if tableStartPosition == nil {
+                    tableStartPosition = currentPosition
+                }
+            } else {
+                // 非表格行，重置
+                tableStartPosition = nil
+            }
+
+            currentPosition += line.count + (index < lines.count - 1 ? 1 : 0) // +1 for newline
+        }
+
+        return tableStartPosition
+    }
+
+    /// 找到最后一个空行之后的位置
+    private func findLastEmptyLinePosition(in text: String) -> Int? {
+        let nsText = text as NSString
+        let pattern = "\n\n"
+        let range = nsText.range(of: pattern, options: .backwards)
+
+        if range.location != NSNotFound {
+            return range.location + range.length
+        }
+        return nil
+    }
+
+    /// 估算需要替换的旧元素数量
+    private func estimateReplaceCount(
+        previousElementCount: Int,
+        contextWindowSize: Int,
+        parseStart: Int,
+        lastSafePosition: Int
+    ) -> Int {
+        // 如果回溯了（parseStart < lastSafePosition），可能需要替换一些元素
+        if parseStart < lastSafePosition {
+            // 保守估计：每 100 个字符约对应 1 个元素
+            let backtrackChars = lastSafePosition - parseStart
+            let estimatedElements = max(1, backtrackChars / 100)
+            return min(estimatedElements, previousElementCount)
+        }
+        return 0
     }
     
     func parseAndRender(_ markdown: String) -> (

@@ -41,8 +41,10 @@ class LatexMathView: UIView {
     }
     
     private func parseAndRender() {
+        let parseStart = CFAbsoluteTimeGetCurrent()
         let parser = LatexParser(latex: latex, font: UIFont.systemFont(ofSize: fontSize))
         rootNode = parser.parse()
+        print("[STREAM] 📐📐 LaTeX 解析耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - parseStart) * 1000))ms")
         setNeedsDisplay()
         invalidateIntrinsicContentSize()
     }
@@ -82,24 +84,31 @@ extension LatexMathView {
           padding: CGFloat = 20,
           backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)
       ) -> UIView {
+          let totalStart = CFAbsoluteTimeGetCurrent()
+          print("[STREAM] 📐📐 createScrollableView 开始: \(latex.prefix(40))...")
 
           // 1. 创建 MathView
+          let mathViewStart = CFAbsoluteTimeGetCurrent()
           let mathView = LatexMathView()
           mathView.latex = latex
           mathView.fontSize = fontSize
           mathView.backgroundColor = backgroundColor
           mathView.layer.cornerRadius = 8
           mathView.layer.masksToBounds = true
+          print("[STREAM] 📐📐 LatexMathView 实例化耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - mathViewStart) * 1000))ms")
 
           // 2. 计算尺寸
+          let sizeStart = CFAbsoluteTimeGetCurrent()
           let mathSize = mathView.intrinsicContentSize
           let contentWidth = mathSize.width + padding
           let contentHeight = mathSize.height + padding
+          print("[STREAM] 📐📐 intrinsicContentSize 计算耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - sizeStart) * 1000))ms, 尺寸: \(mathSize)")
 
           // 3. 判断是否需要滚动
           if contentWidth <= maxWidth {
               // 不需要滚动，直接返回 mathView
               mathView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
+              print("[STREAM] 📐📐 createScrollableView 完成(无滚动)，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
               return mathView
           } else {
               // 需要滚动，包裹在 ScrollView 中
@@ -115,6 +124,7 @@ extension LatexMathView {
               // 设置 scrollView 的 frame
               scrollView.frame = CGRect(x: 0, y: 0, width: maxWidth, height: contentHeight)
 
+              print("[STREAM] 📐📐 createScrollableView 完成(带滚动)，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
               return scrollView
           }
       }
@@ -125,13 +135,16 @@ extension LatexMathView {
           fontSize: CGFloat = 22,
           padding: CGFloat = 20
       ) -> CGSize {
+          let start = CFAbsoluteTimeGetCurrent()
           let mathView = LatexMathView()
           mathView.latex = latex
           mathView.fontSize = fontSize
           let intrinsicSize = mathView.intrinsicContentSize
-          return CGSize(
+          let result = CGSize(
               width: intrinsicSize.width + padding,
               height: intrinsicSize.height + padding
           )
+          print("[STREAM] 📐📐 calculateSize 完成，耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - start) * 1000))ms")
+          return result
       }
   }
