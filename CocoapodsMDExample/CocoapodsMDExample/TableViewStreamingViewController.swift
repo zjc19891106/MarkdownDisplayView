@@ -350,62 +350,6 @@ class ChatMarkdownCell: UITableViewCell {
         )
     }
 
-    // MARK: - 真流式解析方法（增量解析 + 假流式UI）
-
-    /// 开始真流式解析（适用于网络流式响应场景）
-    /// - Parameters:
-    ///   - onStart: 首次显示内容时的回调
-    ///   - completion: 完成回调
-    func startRealStreaming(onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
-        // 重置暂停状态
-        isPaused = false
-
-        // ⭐️ 标记为流式状态
-        isCurrentlyStreaming = true
-
-        markdownView.startRealStreaming(
-            "",
-            unit: .character,
-            unitsPerChunk: 4,
-            interval: 0.06,
-            autoScrollBottom: false,
-            onStart: { [weak self] in
-                guard let self = self else { return }
-
-                // 1. 执行 UI 切换逻辑
-                self.typingIndicator.isHidden = true
-                self.typingIndicator.stopAnimating()
-                self.markdownView.isHidden = false
-                NSLayoutConstraint.deactivate(self.loadingConstraints)
-                NSLayoutConstraint.activate(self.contentConstraints)
-                self.layoutIfNeeded()
-
-                // 2. 通知外部
-                onStart?()
-            },
-            onComplete: { [weak self] in
-                self?.isCurrentlyStreaming = false
-                completion()
-            }
-        )
-    }
-
-    /// 追加真流式内容
-    func appendRealStreamingContent(_ text: String) {
-        markdownView.appendRealStreamingContent(text)
-    }
-
-    /// 完成真流式解析
-    func finishRealStreaming() {
-        markdownView.finishRealStreaming()
-    }
-
-    /// 停止真流式解析
-    func stopRealStreaming() {
-        markdownView.stopRealStreaming()
-        isCurrentlyStreaming = false
-    }
-
     // ⭐️ 方案C优化版：暂停渲染（使用 MarkdownViewTextKit 新 API）
     func pauseRendering() {
         guard !isPaused else { return }
@@ -538,7 +482,7 @@ class TableViewStreamingViewController: UIViewController {
     }
     
     private func setupInputArea() {
-        // 原有的假流式按钮
+        // 假流式按钮
         let button = UIButton(type: .system)
         button.setTitle("假流式", for: .normal)
         button.backgroundColor = .systemBlue
@@ -546,28 +490,13 @@ class TableViewStreamingViewController: UIViewController {
         button.layer.cornerRadius = 20
         button.addTarget(self, action: #selector(handleSend), for: .touchUpInside)
 
-        // 新增：真流式按钮
-        let realStreamButton = UIButton(type: .system)
-        realStreamButton.setTitle("真流式", for: .normal)
-        realStreamButton.backgroundColor = .systemGreen
-        realStreamButton.setTitleColor(.white, for: .normal)
-        realStreamButton.layer.cornerRadius = 20
-        realStreamButton.addTarget(self, action: #selector(handleRealStreamSend), for: .touchUpInside)
-
         view.addSubview(button)
-        view.addSubview(realStreamButton)
         button.translatesAutoresizingMaskIntoConstraints = false
-        realStreamButton.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            button.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: -95),
-            button.widthAnchor.constraint(equalToConstant: 90),
-            button.heightAnchor.constraint(equalToConstant: 44),
-
-            realStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            realStreamButton.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: 5),
-            realStreamButton.widthAnchor.constraint(equalToConstant: 90),
-            realStreamButton.heightAnchor.constraint(equalToConstant: 44)
+            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            button.widthAnchor.constraint(equalToConstant: 100),
+            button.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
     
@@ -657,126 +586,6 @@ class TableViewStreamingViewController: UIViewController {
                 }
             }
         }
-
-    // MARK: - 真流式处理（增量解析模式）
-
-    /// 模拟真流式网络响应
-    @objc private func handleRealStreamSend() {
-        guard !isSending else { return }
-        isSending = true
-
-        let userText = "请使用真流式模式生成 Markdown。"
-        let aiResponseText = demoMarkdown
-
-        // 1. 用户消息
-        let userMsg = ChatMessage(content: userText, isUser: true)
-        messages.append(userMsg)
-        insertRowAndScroll(animated: true)
-
-        // 2. 插入 Bot Loading
-        var botMsg = ChatMessage(content: "", isUser: false, isStreaming: false, isLoading: true)
-        messages.append(botMsg)
-        let botIndexPath = IndexPath(row: messages.count - 1, section: 0)
-        tableView.insertRows(at: [botIndexPath], with: .bottom)
-        scrollToBottom(animated: true)
-
-        // 3. 模拟网络请求开始
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self = self else { return }
-
-            self.messages[botIndexPath.row].isLoading = false
-            self.messages[botIndexPath.row].isStreaming = true
-            self.messages[botIndexPath.row].content = ""
-
-            if let cell = self.tableView.cellForRow(at: botIndexPath) as? ChatMarkdownCell {
-                // 绑定高度回调
-                cell.onContentHeightChanged = { [weak self, weak cell] in
-                    guard let self = self, let cell = cell else { return }
-                    UIView.performWithoutAnimation {
-                        self.tableView.performBatchUpdates(nil, completion: nil)
-                    }
-                    if cell.isStreaming {
-                        self.scrollToBottom(animated: false)
-                    }
-                }
-
-                // 开始真流式渲染
-                cell.startRealStreaming(
-                    onStart: { [weak self] in
-                        self?.messages[botIndexPath.row].isLoading = false
-                        self?.messages[botIndexPath.row].isStreaming = true
-                        self?.isSending = false
-                    },
-                    completion: { [weak self] in
-                        self?.messages[botIndexPath.row].content = aiResponseText
-                        self?.messages[botIndexPath.row].isStreaming = false
-                        self?.isSending = true
-                    }
-                )
-
-                // 4. 模拟网络流式响应：将文本分成多个 chunk，逐步追加
-                self.simulateNetworkChunks(
-                    text: aiResponseText,
-                    cell: cell,
-                    botIndexPath: botIndexPath
-                )
-            } else {
-                // Cell 不可见，直接显示最终结果
-                self.messages[botIndexPath.row].content = aiResponseText
-                self.messages[botIndexPath.row].isStreaming = false
-                self.isSending = true
-                self.tableView.reloadRows(at: [botIndexPath], with: .none)
-            }
-        }
-    }
-
-    /// 模拟网络 chunk 分批发送
-    private func simulateNetworkChunks(text: String, cell: ChatMarkdownCell, botIndexPath: IndexPath) {
-        // 将文本按行分割，模拟网络流式响应
-        let lines = text.components(separatedBy: "\n")
-        var currentIndex = 0
-        var accumulatedText = ""
-
-        // 使用 Timer 模拟网络延迟
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self, weak cell] timer in
-            guard let self = self, let cell = cell else {
-                timer.invalidate()
-                return
-            }
-
-            // 每次发送 1-3 行
-            let linesToSend = min(Int.random(in: 1...3), lines.count - currentIndex)
-
-            if linesToSend <= 0 {
-                // 所有内容已发送，完成流式
-                timer.invalidate()
-                cell.finishRealStreaming()
-                return
-            }
-
-            // 追加新内容
-            for _ in 0..<linesToSend {
-                if currentIndex < lines.count {
-                    if !accumulatedText.isEmpty {
-                        accumulatedText += "\n"
-                    }
-                    accumulatedText += lines[currentIndex]
-                    currentIndex += 1
-                }
-            }
-
-            // 追加到 Cell
-            let newChunk = lines[(currentIndex - linesToSend)..<currentIndex].joined(separator: "\n")
-            if currentIndex > linesToSend {
-                cell.appendRealStreamingContent("\n" + newChunk)
-            } else {
-                cell.appendRealStreamingContent(newChunk)
-            }
-
-            // 更新数据源
-            self.messages[botIndexPath.row].content = accumulatedText
-        }
-    }
 
     // 辅助方法：插入并滚动
     private func insertRowAndScroll(animated: Bool) {
