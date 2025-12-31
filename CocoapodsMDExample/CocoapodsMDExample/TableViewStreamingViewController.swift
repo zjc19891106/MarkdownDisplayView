@@ -657,12 +657,17 @@ class TableViewStreamingViewController: UIViewController {
                 self.realStreamCell = cell
 
                 // 绑定高度回调
-                cell.onContentHeightChanged = { [weak self, weak cell] in
-                    guard let self = self, let cell = cell else { return }
+                // ⚠️ 使用数据源的 isStreaming 状态，而不是 Cell 的状态
+                // 避免 Cell 状态被复用或其他原因重置导致滚动失效
+                cell.onContentHeightChanged = { [weak self] in
+                    guard let self = self else { return }
                     UIView.performWithoutAnimation {
                         self.tableView.performBatchUpdates(nil, completion: nil)
                     }
-                    if cell.isStreaming {
+                    // 检查数据源状态
+                    if let indexPath = self.realStreamIndexPath,
+                       indexPath.row < self.messages.count,
+                       self.messages[indexPath.row].isStreaming {
                         self.scrollToBottom(animated: false)
                     }
                 }
