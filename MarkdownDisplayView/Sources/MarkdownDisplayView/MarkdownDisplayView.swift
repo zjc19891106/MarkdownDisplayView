@@ -5263,6 +5263,191 @@ public final class MarkdownViewTextKit: UIView {
         // 设置 markdown 会触发 scheduleRerender()，自动渲染包括脚注
     }
 
+    // MARK: - ⭐️ 真流式 Append 模式（Real Streaming）
+
+    /// 真流式模式标记
+    private var isRealStreamingMode = false
+
+    /// 真流式累积的完整文本（用于增量解析）
+    private var realStreamAccumulatedText = ""
+
+    /// 真流式已解析的元素数量
+    private var realStreamParsedElementCount = 0
+
+    /// 真流式待渲染的块队列
+    private var realStreamBlockQueue: [String] = []
+
+    /// 真流式完成回调
+    private var realStreamOnComplete: (() -> Void)?
+
+    /// 开始真流式模式
+    /// - Parameters:
+    ///   - autoScrollBottom: 是否自动滚动到底部
+    ///   - onComplete: 流式完成回调
+    public func beginRealStreaming(autoScrollBottom: Bool = true, onComplete: (() -> Void)? = nil) {
+        // 停止任何现有流式
+        stopStreaming()
+
+        // 初始化真流式状态
+        isRealStreamingMode = true
+        isStreaming = true
+        autoScrollEnabled = autoScrollBottom
+        realStreamAccumulatedText = ""
+        realStreamParsedElementCount = 0
+        realStreamBlockQueue = []
+        realStreamOnComplete = onComplete
+
+        // 清空现有内容
+        markdown = ""
+        oldElements = []
+        contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        headingViews.removeAll()
+        tocSectionView = nil
+
+        // 重置 TypewriterEngine
+        typewriterEngine.stop()
+
+        // 记录开始时间
+        streamingStartTimestamp = CFAbsoluteTimeGetCurrent()
+
+        print("🎬 [RealStream] Started real streaming mode")
+    }
+
+    /// 追加一个完整的 Markdown 块
+    /// - Parameter block: 完整的 Markdown 块（如标题+内容、段落、代码块等）
+    /// - Note: 每个块应该是完整的 Markdown 结构，不会在语法中间截断
+    public func appendBlock(_ block: String) {
+        guard isRealStreamingMode else {
+            print("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
+            return
+        }
+
+        print("📝 [RealStream] Appending block: \(block.prefix(50))... (\(block.count) chars)")
+
+        // 累积文本
+        realStreamAccumulatedText += block
+
+        // 异步解析新增内容
+        parseAndDisplayNewContent()
+    }
+
+    /// 解析并显示新增内容
+    private func parseAndDisplayNewContent() {
+        let textToParse = realStreamAccumulatedText
+        let previousElementCount = realStreamParsedElementCount
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, self.isRealStreamingMode else { return }
+
+            let parseStart = CFAbsoluteTimeGetCurrent()
+
+            // 预处理脚注
+            let (processedText, footnotes) = self.preprocessFootnotes(textToParse)
+
+            // 解析 Markdown
+            let config = self.configuration
+            let containerWidth = UIScreen.main.bounds.width - 32
+            let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
+            let (elements, attachments, tocItems, tocId) = renderer.render(processedText)
+
+            let parseDuration = (CFAbsoluteTimeGetCurrent() - parseStart) * 1000
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.isRealStreamingMode else { return }
+
+                // 计算新增的元素
+                let newElementCount = elements.count
+                let addedElements = Array(elements.dropFirst(previousElementCount))
+
+                print("✅ [RealStream] Parsed: +\(addedElements.count) elements (total: \(newElementCount)), time: \(String(format: "%.1f", parseDuration))ms")
+
+                // 更新状态
+                self.realStreamParsedElementCount = newElementCount
+                self.streamParsedFootnotes = footnotes
+                self.imageAttachments = attachments
+                self.tableOfContents = tocItems
+                self.tocSectionId = tocId
+
+                // 显示新增元素
+                if !addedElements.isEmpty {
+                    self.displayRealStreamElements(addedElements, startIndex: previousElementCount)
+                }
+            }
+        }
+    }
+
+    /// 显示真流式新增的元素
+    private func displayRealStreamElements(_ elements: [MarkdownRenderElement], startIndex: Int) {
+        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+
+        for (index, element) in elements.enumerated() {
+            let globalIndex = startIndex + index
+            let view = createView(for: element, containerWidth: containerWidth)
+            view.tag = 1000 + globalIndex
+
+            if enableTypewriterEffect {
+                view.isHidden = true
+                contentStackView.addArrangedSubview(view)
+                typewriterEngine.enqueue(view: view)
+            } else {
+                contentStackView.addArrangedSubview(view)
+            }
+
+            // 注册 heading
+            if case .heading(let id, _) = element {
+                headingViews[id] = view
+                if id == tocSectionId { tocSectionView = view }
+            }
+
+            oldElements.append(element)
+        }
+
+        // 启动 TypewriterEngine
+        if enableTypewriterEffect {
+            typewriterEngine.start()
+        }
+
+        // 通知高度变化
+        notifyHeightChange()
+
+        // 自动滚动
+        if autoScrollEnabled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.scrollToBottom(animated: false)
+            }
+        }
+    }
+
+    /// 结束真流式模式
+    public func endRealStreaming() {
+        guard isRealStreamingMode else { return }
+
+        print("🎉 [RealStream] Ending real streaming mode")
+
+        // 更新 markdown 属性（用于后续非流式访问）
+        markdown = realStreamAccumulatedText
+
+        // 处理脚注
+        if !streamParsedFootnotes.isEmpty {
+            let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+            updateFootnotes(streamParsedFootnotes, width: containerWidth, newElementCount: oldElements.count)
+        }
+
+        // 重置状态
+        isRealStreamingMode = false
+        isStreaming = false
+
+        // 触发完成回调
+        realStreamOnComplete?()
+        realStreamOnComplete = nil
+
+        // 通知最终高度
+        notifyHeightChange()
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - streamingStartTimestamp) * 1000
+        print("✅ [RealStream] Completed in \(String(format: "%.1f", elapsed))ms")
+    }
+
     // MARK: - ⭐️ 暂停/恢复显示 API
 
     /// 暂停显示更新（停止 UI 刷新，但保留流式状态）
