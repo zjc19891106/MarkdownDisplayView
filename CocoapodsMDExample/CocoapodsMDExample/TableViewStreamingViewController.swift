@@ -376,16 +376,20 @@ class ChatMarkdownCell: UITableViewCell {
 
     // MARK: - 真流式 API
 
+    /// 真流式完成回调（保存以便后续调用）
+    private var realStreamCompletion: (() -> Void)?
+
     /// 开始真流式模式
     func beginRealStreaming(onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
         // 重置状态
         isPaused = false
         isCurrentlyStreaming = true
+        realStreamCompletion = completion
 
-        markdownView.beginRealStreaming(autoScrollBottom: false) { [weak self] in
-            self?.isCurrentlyStreaming = false
-            completion()
-        }
+        // ⚠️ 注意：不在 onComplete 中设置 isCurrentlyStreaming = false
+        // 因为 endRealStreaming 调用时 TypewriterEngine 可能还在显示内容
+        // 我们在 endRealStreaming 中手动处理完成逻辑
+        markdownView.beginRealStreaming(autoScrollBottom: false, onComplete: nil)
 
         // 立即执行 UI 切换
         typingIndicator.isHidden = true
@@ -406,7 +410,14 @@ class ChatMarkdownCell: UITableViewCell {
     /// 结束真流式
     func endRealStreaming() {
         markdownView.endRealStreaming()
-        isCurrentlyStreaming = false
+
+        // ⚠️ 延迟设置 isCurrentlyStreaming = false
+        // 给 TypewriterEngine 足够时间完成显示
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.isCurrentlyStreaming = false
+            self?.realStreamCompletion?()
+            self?.realStreamCompletion = nil
+        }
     }
 
     override func prepareForReuse() {

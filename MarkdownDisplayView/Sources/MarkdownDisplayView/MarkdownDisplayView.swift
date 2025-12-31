@@ -5341,8 +5341,10 @@ public final class MarkdownViewTextKit: UIView {
 
             let parseStart = CFAbsoluteTimeGetCurrent()
 
-            // 预处理脚注
-            let (processedText, footnotes) = self.preprocessFootnotes(textToParse)
+            // ⚠️ 真流式模式下，不预处理脚注，避免脚注提前渲染
+            // 脚注将在 endRealStreaming() 中统一处理
+            // 直接使用原始文本，脚注定义 [^1]: xxx 会被忽略（不会作为普通文本显示）
+            let processedText = textToParse
 
             // 解析 Markdown
             let config = self.configuration
@@ -5361,9 +5363,9 @@ public final class MarkdownViewTextKit: UIView {
 
                 print("✅ [RealStream] Parsed: +\(addedElements.count) elements (total: \(newElementCount)), time: \(String(format: "%.1f", parseDuration))ms")
 
-                // 更新状态
+                // 更新状态（不更新脚注，脚注在 endRealStreaming 中处理）
                 self.realStreamParsedElementCount = newElementCount
-                self.streamParsedFootnotes = footnotes
+                // self.streamParsedFootnotes = footnotes  // ⚠️ 移除，不在这里处理脚注
                 self.imageAttachments = attachments
                 self.tableOfContents = tocItems
                 self.tocSectionId = tocId
@@ -5427,10 +5429,12 @@ public final class MarkdownViewTextKit: UIView {
         // 更新 markdown 属性（用于后续非流式访问）
         markdown = realStreamAccumulatedText
 
-        // 处理脚注
-        if !streamParsedFootnotes.isEmpty {
+        // ⚠️ 在结束时统一处理脚注
+        let (_, footnotes) = preprocessFootnotes(realStreamAccumulatedText)
+        if !footnotes.isEmpty {
             let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-            updateFootnotes(streamParsedFootnotes, width: containerWidth, newElementCount: oldElements.count)
+            updateFootnotes(footnotes, width: containerWidth, newElementCount: oldElements.count)
+            print("📝 [RealStream] Processed \(footnotes.count) footnotes at end")
         }
 
         // 重置状态
