@@ -4614,8 +4614,8 @@ public final class MarkdownViewTextKit: UIView {
             markdown = fakeStreamParsedText
             streamFullText = fakeStreamParsedText  // ⭐️ 修复：确保 performFinalParse 使用正确的文本
 
-            // 2. 然后标记流式结束
-            isStreaming = false
+            // ⚠️ 注意：不要在这里设置 isStreaming = false
+            // 而是在 finishBlock 执行完毕后才设置，确保整个显示过程中滚动都能正常工作
 
             print("🎉 [Fake-Stream] All chunks parsed, waiting for TypewriterEngine to finish...")
 
@@ -4627,6 +4627,9 @@ public final class MarkdownViewTextKit: UIView {
             // 定义收尾逻辑（脚注渲染 + 最终解析 + 回调）
             let finishBlock: () -> Void = { [weak self] in
                 guard let self = self else { return }
+
+                // ⚠️ 现在才标记流式结束
+                self.isStreaming = false
 
                 // 渲染脚注（最后才渲染）
                 if !footnotes.isEmpty {
