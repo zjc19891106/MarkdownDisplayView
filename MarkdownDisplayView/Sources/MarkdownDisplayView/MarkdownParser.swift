@@ -488,10 +488,10 @@ final class MarkdownParser: MarkdownParserProtocol {
             
         case let codeBlock as CodeBlock:
             flushTextBuffer()
-            
+
             let rawCode = codeBlock.code.trimmingCharacters(in: .whitespacesAndNewlines)
             let lang = codeBlock.language?.lowercased()
-            
+
             // Check if it's a LaTeX block (wrapped in $$ or language is math/latex)
             if rawCode.hasPrefix("$$") && rawCode.hasSuffix("$$") && rawCode.count >= 4 {
                 let startIndex = rawCode.index(rawCode.startIndex, offsetBy: 2)
@@ -501,7 +501,8 @@ final class MarkdownParser: MarkdownParserProtocol {
             } else if lang == "math" || lang == "latex" {
                  elements.append(.latex(codeBlock.code))
             } else {
-                elements.append(.codeBlock(renderCodeBlock(codeBlock)))
+                // 传递语言信息以支持自定义代码块渲染器
+                elements.append(.codeBlock(language: lang, code: renderCodeBlock(codeBlock)))
             }
             
         case let blockQuote as BlockQuote:

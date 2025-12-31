@@ -1208,6 +1208,9 @@ public final class MarkdownViewTextKit: UIView {
             return oldData.headers.count == newData.headers.count &&
                    oldData.rows.count == newData.rows.count
 
+        case (.custom(let oldData), .custom(let newData)):
+            return oldData == newData
+
         default:
             return false  // 类型不匹配
         }
@@ -1237,6 +1240,8 @@ public final class MarkdownViewTextKit: UIView {
             return true   // 允许复用 Details 视图，以保持展开/收起状态
         case (.list(_, let oldLevel), .list(_, let newLevel)):
             return oldLevel == newLevel  // 层级相同可复用
+        case (.custom(let oldData), .custom(let newData)):
+            return oldData.type == newData.type  // 类型相同可复用
         default:
             return false  // 类型不同，不可复用
         }
@@ -1300,10 +1305,10 @@ public final class MarkdownViewTextKit: UIView {
             }
             return true
 
-        case (.codeBlock(_), .codeBlock(let newText)):
+        case (.codeBlock, .codeBlock(let newLang, let newCode)):
             if let textView = view.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
-                if textView.attributedText != newText {
-                    textView.attributedText = newText
+                if textView.attributedText != newCode {
+                    textView.attributedText = newCode
                     // CodeBlock padding: leading 12 + trailing 12 = 24
                     let codeBlockWidth = max(0, containerWidth - 24)
                     textView.applyLayout(width: codeBlockWidth, force: true)
@@ -1690,6 +1695,14 @@ public final class MarkdownViewTextKit: UIView {
 
             print("✅ [List] Successfully updated, reused existing views")
             return true
+
+        case (.custom(let oldData), .custom(let newData)):
+            // 自定义元素：如果类型相同且数据相同，直接复用
+            if oldData == newData {
+                return true
+            }
+            // 类型相同但数据不同，重新创建视图
+            return false
 
         default:
             break
@@ -2400,8 +2413,8 @@ public final class MarkdownViewTextKit: UIView {
             let childrenHeight = children.reduce(0) { $0 + estimateElementHeight($1, containerWidth: containerWidth - 40) }
             return childrenHeight + 24  // 上下各12pt padding
 
-        case .codeBlock(let text):
-            let lines = text.string.components(separatedBy: .newlines).count
+        case .codeBlock(_, let code):
+            let lines = code.string.components(separatedBy: .newlines).count
             return CGFloat(lines) * 20 + 40  // 每行20pt + 上下各20pt padding
 
         case .table(let data):
@@ -2437,6 +2450,13 @@ public final class MarkdownViewTextKit: UIView {
             return 56  // 40pt 按钮 + 16pt 上下间距
 
         case .rawHTML:
+            return 100
+
+        case .custom(let data):
+            // 自定义元素：尝试从 ViewProvider 获取尺寸
+            if let provider = MarkdownCustomExtensionManager.shared.viewProvider(for: data.type) {
+                return provider.calculateSize(for: data, configuration: configuration, containerWidth: containerWidth).height
+            }
             return 100
         }
     }
@@ -2593,6 +2613,7 @@ public final class MarkdownViewTextKit: UIView {
         case .details: return "Details"
         case .list: return "List"
         case .rawHTML: return "HTML"
+        case .custom(let data): return "Custom(\(data.type))"
         }
     }
 
@@ -2677,9 +2698,10 @@ public final class MarkdownViewTextKit: UIView {
             // ⚡️ 修复：quote 是递归的，使用 children 数量作为 key
             return "quote_\(level)_\(children.count)_\(widthKey)"
 
-        case .codeBlock(let text):
-            let codeHash = text.string.prefix(100).hashValue
-            return "code_\(codeHash)_\(text.length)_\(widthKey)"
+        case .codeBlock(let lang, let code):
+            let codeHash = code.string.prefix(100).hashValue
+            let langKey = lang ?? "plain"
+            return "code_\(langKey)_\(codeHash)_\(code.length)_\(widthKey)"
 
         case .table(let data):
             return "table_\(data.headers.count)_\(data.rows.count)_\(widthKey)"
@@ -2703,6 +2725,9 @@ public final class MarkdownViewTextKit: UIView {
 
         case .rawHTML:
             return "html_\(widthKey)"
+
+        case .custom(let data):
+            return "custom_\(data.type)_\(data.rawText.hashValue)_\(widthKey)"
         }
     }
 
@@ -2761,12 +2786,19 @@ public final class MarkdownViewTextKit: UIView {
             
             let attrString = NSMutableAttributedString(attachment: attachment)
             attrString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: attrString.length))
-            
+
             return createTextView(with: attrString, width: containerWidth)
 
         case .thematicBreak:
             return createThematicBreakView(width: containerWidth)
-        case .codeBlock(let attributedString):
+        case .codeBlock(let language, let attributedString):
+            // 检查是否有自定义代码块渲染器
+            if let lang = language,
+               let renderer = MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: lang) {
+                let rawCode = attributedString.string
+                return renderer.renderCodeBlock(code: rawCode, configuration: configuration, containerWidth: containerWidth)
+            }
+            // 默认代码块渲染
             return createCodeBlockView(with: attributedString, width: containerWidth, fixedHeight: precalculatedHeight)
         case .quote(let children, let level):
             return createQuoteView(children: children, width: containerWidth, level: level)
@@ -2785,9 +2817,34 @@ public final class MarkdownViewTextKit: UIView {
             return UIView()
         case .list(items: let list, level: let level):
             return createListView(items: list, width: containerWidth, level: level)
+        case .custom(let data):
+            return createCustomView(data: data, containerWidth: containerWidth)
         }
     }
-    
+
+    // MARK: - Custom View Creation
+
+    private func createCustomView(data: CustomElementData, containerWidth: CGFloat) -> UIView {
+        print("🔷[MDEXT] createCustomView called: type=\(data.type), raw=\(data.rawText)")
+        // 从扩展管理器获取视图提供者
+        guard let provider = MarkdownCustomExtensionManager.shared.viewProvider(for: data.type) else {
+            print("🔷[MDEXT] ❌ No viewProvider found for type: \(data.type)")
+            // 无匹配的视图提供者，返回占位视图
+            let placeholder = UILabel()
+            placeholder.text = "[\(data.type): \(data.rawText)]"
+            placeholder.textColor = .secondaryLabel
+            placeholder.font = configuration.bodyFont
+            return placeholder
+        }
+
+        print("🔷[MDEXT] ✅ viewProvider found, creating view...")
+        return provider.createView(
+            for: data,
+            configuration: configuration,
+            containerWidth: containerWidth
+        )
+    }
+
     // 2. 实现 createListView
     // MARK: - List View Creation
 
@@ -4724,6 +4781,8 @@ public final class MarkdownViewTextKit: UIView {
                 return true
             case .heading, .attributedText:
                 return false
+            case .custom:
+                return true  // 自定义元素默认作为块级元素
             }
         }
 

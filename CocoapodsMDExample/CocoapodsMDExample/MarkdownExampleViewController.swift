@@ -127,9 +127,10 @@ let sampleMarkdown = """
     9. [表格测试](#表格测试)
     10. [分隔线测试](#分隔线测试)
     11. [脚注测试](#脚注测试)
-    12. [混合内容测试](#混合内容测试)
-    13. [边界情况测试](#边界情况测试)
-    14. [CocoaPods (折叠)](#CocoaPods)
+    12. [自定义样式测试](#自定义样式测试)
+    13. [混合内容测试](#混合内容测试)
+    14. [边界情况测试](#边界情况测试)
+    15. [CocoaPods (折叠)](#CocoaPods)
 
 
     ## CocoaPods
@@ -681,7 +682,7 @@ let sampleMarkdown = """
     ```swift
     let veryLongVariableName = "This is a very long string that should test horizontal scrolling or wrapping in code blocks when displayed on mobile devices"
     ```
-
+    
     ---
 
     # 九、表格测试
@@ -814,21 +815,68 @@ let sampleMarkdown = """
 
     ---
 
-    # 十二、混合内容测试
+    # 十二、自定义样式测试
 
-    ## 12.1 复杂段落
+    ## 12.1 视频播放
+
+    下面是一个视频示例，点击播放按钮可使用 QuickLook 播放：
+
+    [video:video]
+
+    视频支持自动生成缩略图和时长显示。
+    
+    ## 12.2 Mermaid
+
+    支持 Mermaid 语法渲染各类图表：
+
+    ```mermaid
+    graph TD
+        A[开始] --> B{是否支持?}
+        B -->|是| C[渲染图表]
+        B -->|否| D[显示代码]
+        C --> E[完成]
+        D --> E
+    ```
+
+    ## 12.3 Mindmap
+
+    Mermaid 也支持思维导图语法（Mermaid 9.1+ 功能）：
+
+    ```mermaid
+    mindmap
+      root((MarkdownDisplayKit))
+        基础语法
+          标题
+          列表
+          表格
+          代码块
+        扩展功能
+          LaTeX公式
+          语法高亮
+          目录生成
+        自定义扩展
+          视频播放
+          Mermaid图表
+          更多...
+    ```    
+
+    ---
+
+    # 十三、混合内容测试
+
+    ## 13.1 复杂段落
 
     这是一段**复杂**的段落，包含 *多种* 格式：`代码`、[链接](https://apple.com)、~~删除线~~ 以及普通文本。它还引用了一个脚注[^mix]。
 
     [^mix]: 这是混合内容测试的脚注。
 
-    ## 12.2 列表中的复杂内容
+    ## 13.2 列表中的复杂内容
 
     - **粗体项目** - 包含 *斜体* 和 `代码`
     - 包含 [链接](https://apple.com) 的项目
     - 包含图片引用的项目：![小图](https://download-sdk.oss-cn-beijing.aliyuncs.com/downloads/IMDemo/avatar/Image1.png)
 
-    ## 12.3 引用中的复杂内容
+    ## 13.3 引用中的复杂内容
 
     > 这是一段引用，包含 **粗体**、*斜体*、`代码`。
     > 
@@ -839,7 +887,7 @@ let sampleMarkdown = """
 
     [^quote]: 引用中的脚注。
 
-    ## 12.4 表格后紧跟其他内容
+    ## 13.4 表格后紧跟其他内容
 
     | 名称 | 值 |
     |------|-----|
@@ -856,15 +904,15 @@ let sampleMarkdown = """
 
     ---
 
-    # 十三、边界情况测试
+    # 十四、边界情况测试
 
-    ## 13.1 空内容测试
+    ## 14.1 空内容测试
 
     ### 空标题后的内容
 
     这是空标题下的内容。
 
-    ## 13.2 特殊字符
+    ## 14.2 特殊字符
 
     - 小于号: <
     - 大于号: >
@@ -874,7 +922,7 @@ let sampleMarkdown = """
     - 星号: \\*
     - 下划线: \\_
 
-    ## 13.3 Unicode 字符
+    ## 14.3 Unicode 字符
 
     - Emoji: 😀 🎉 🚀 ✅ ❌ ⚠️ 💡 🔥
     - 中文: 你好世界
@@ -884,33 +932,33 @@ let sampleMarkdown = """
     - 希腊字母: α β γ δ ε
     - 数学符号: ∑ ∏ √ ∞ ≈ ≠ ≤ ≥
 
-    ## 13.4 超长单词
+    ## 14.4 超长单词
 
     Pneumonoultramicroscopicsilicovolcanoconiosis
 
     Supercalifragilisticexpialidocious
 
-    ## 13.5 纯数字内容
+    ## 14.5 纯数字内容
 
     1234567890
 
-    ## 13.6 纯符号内容
+    ## 14.6 纯符号内容
 
     !@#$%^&*()_+-=[]{}|;':\",./<>?
 
-    ## 13.7 空链接和图片
+    ## 14.7 空链接和图片
 
     [空链接]()
 
     ![空图片]()
 
-    ## 13.8 连续格式切换
+    ## 14.8 连续格式切换
 
     **粗***斜*`码`~~删~~**粗***斜*`码`~~删~~
 
     ---
 
-    
+
 
     # 总结
 
@@ -928,7 +976,45 @@ let sampleMarkdown = """
     | 表格 | 基础/格式/多列 | ✅ |
     | 分隔线 | 多种语法 | ✅ |
     | 脚注 | 数字/命名 | ✅ |
+    | 视频 | 自定义扩展 | ✅ |
+    | Mermaid | 代码块扩展 | ✅ |
     | 边界情况 | 特殊字符/Unicode | ✅ |
+
+    ---
+
+    # 自定义扩展演示
+
+    ## 视频播放
+
+    MarkdownDisplayKit 支持自定义扩展，下面是视频扩展的演示：
+
+    [video:video]
+
+    **支持的格式：** `[video:文件名]`
+
+    - 自动生成视频缩略图
+    - 显示视频时长
+    - 点击使用 QuickLook 播放
+
+    ## Mermaid 图表
+
+    支持 Mermaid 语法渲染流程图、时序图等：
+
+    ```mermaid
+    graph TD
+        A[开始] --> B{是否支持?}
+        B -->|是| C[渲染图表]
+        B -->|否| D[显示代码]
+        C --> E[完成]
+        D --> E
+    ```
+
+    **支持的图表类型：**
+    - 流程图 (flowchart)
+    - 时序图 (sequence)
+    - 类图 (class)
+    - 状态图 (state)
+    - 甘特图 (gantt)
 
     ---
 

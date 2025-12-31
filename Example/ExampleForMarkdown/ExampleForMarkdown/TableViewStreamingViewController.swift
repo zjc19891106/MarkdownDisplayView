@@ -18,8 +18,6 @@ struct ChatMessage {
     var isLoading: Bool = false   // 是否正在思考(网络请求中)
 }
 
-// MARK: - Cell
-
 class TypingIndicatorView: UIView {
     private let stackView = UIStackView()
     private var dots: [UIView] = []
@@ -250,6 +248,12 @@ class ChatMarkdownCell: UITableViewCell {
     func configure(with message: ChatMessage) {
 
         // 1. 设置左右对齐颜色
+        // ⭐️ 修复：只在颜色需要改变时才设置，避免触发 scheduleRerender
+        let targetColor: UIColor = message.isUser ? .white : .label
+        if markdownView.configuration.textColor != targetColor {
+            markdownView.configuration.textColor = targetColor
+        }
+
         if message.isUser {
             // 用户消息：右对齐 + 固定宽度
             alignConstraints[0].isActive = false  // AI leading
@@ -257,7 +261,6 @@ class ChatMarkdownCell: UITableViewCell {
             alignConstraints[2].isActive = true   // User trailing
             alignConstraints[3].isActive = true   // User width
             bgView.backgroundColor = .systemBlue
-            markdownView.configuration.textColor = .white
         } else {
             // AI 消息：左对齐 + 固定宽度
             alignConstraints[0].isActive = true   // AI leading
@@ -265,41 +268,41 @@ class ChatMarkdownCell: UITableViewCell {
             alignConstraints[2].isActive = false  // User trailing
             alignConstraints[3].isActive = false  // User width
             bgView.backgroundColor = UIColor(red: 242/255, green: 242/255, blue: 247/255, alpha: 1) // 系统灰
-            markdownView.configuration.textColor = .label
         }
-        
+
         // 2. 彻底解决冲突：二选一激活约束
         if message.isLoading {
             // [模式 A: Loading]
-            
+
             // 步骤1: 停止并隐藏 Markdown
             markdownView.isHidden = true
             markdownView.markdown = ""
-            
+
             // 步骤2: 显示 Loading
             typingIndicator.isHidden = false
             typingIndicator.startAnimating()
-            
+
             // 步骤3: 切换约束 (先 deactivate 再 activate，防止冲突报错)
             NSLayoutConstraint.deactivate(contentConstraints) // 松开 Markdown 的手
             NSLayoutConstraint.activate(loadingConstraints)   // 让 Loading 接管气泡高度
-            
+
         } else {
             // [模式 B: 内容展示] (包括用户消息)
-            
+
             // 步骤1: 隐藏 Loading
             typingIndicator.stopAnimating()
             typingIndicator.isHidden = true
-            
+
             // 步骤2: 显示 Markdown
             markdownView.isHidden = false
-            
+
             // 步骤3: 切换约束
             NSLayoutConstraint.deactivate(loadingConstraints) // 松开 Loading 的手
             NSLayoutConstraint.activate(contentConstraints)   // 让 Markdown 接管气泡高度
-            
+
             // 步骤4: 赋值
-            if !message.isStreaming {
+            // ⭐️ 修复：只有非流式状态且内容不同时才设置，避免重复渲染导致卡顿
+            if !message.isStreaming && markdownView.markdown != message.content {
                 markdownView.markdown = message.content
             }
         }
@@ -317,8 +320,8 @@ class ChatMarkdownCell: UITableViewCell {
         markdownView.startStreaming(
             text,
             unit: .character,
-            unitsPerChunk: 2,
-            interval: 0.1,
+            unitsPerChunk: 4,
+            interval: 0.06,
             autoScrollBottom: false,
 
             // 🟢 onStart: 后台算完了，马上要出字了
@@ -371,7 +374,6 @@ class ChatMarkdownCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        markdownView.stopStreaming()
         typingIndicator.stopAnimating()
         onContentHeightChanged = nil
         // ⭐️ 重置流式标记
@@ -478,19 +480,20 @@ class TableViewStreamingViewController: UIViewController {
     }
     
     private func setupInputArea() {
+        // 假流式按钮
         let button = UIButton(type: .system)
-        button.setTitle("发送模拟消息", for: .normal)
+        button.setTitle("假流式", for: .normal)
         button.backgroundColor = .systemBlue
         button.setTitleColor(.white, for: .normal)
         button.layer.cornerRadius = 20
         button.addTarget(self, action: #selector(handleSend), for: .touchUpInside)
-        
+
         view.addSubview(button)
         button.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
             button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            button.widthAnchor.constraint(equalToConstant: 200),
+            button.widthAnchor.constraint(equalToConstant: 100),
             button.heightAnchor.constraint(equalToConstant: 44)
         ])
     }

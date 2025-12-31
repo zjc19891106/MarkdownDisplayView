@@ -8,8 +8,8 @@
 
 Pod::Spec.new do |s|
   s.name             = 'MarkdownDisplayKit'
-  s.version          = '1.3.0'
-  s.summary          = '一个功能强大的 iOS Markdown 渲染组件，基于 TextKit 2 构建，提供流畅的渲染性能和丰富的自定义选项。'
+  s.version          = '1.4.0'
+  s.summary          = '一个功能强大的 iOS Markdown 渲染组件，基于 TextKit 2 构建，提供流畅的渲染性能和丰富的自定义选项。支持自定义样式,秒加载渲染readme'
 
   s.description      = <<-DESC
   MarkdownDisplayKit 是一个高性能的 iOS Markdown 渲染库，基于 Apple 的 TextKit 2 框架构建。
@@ -23,7 +23,8 @@ Pod::Spec.new do |s|
   • 高性能异步渲染
   • 丰富的自定义选项（字体、颜色、间距等）
   • 支持图片异步加载和缓存
-
+  • 支持自定义解析渲染样式
+  
   注意：本库依赖 swift-markdown 进行 Markdown 解析。由于 swift-markdown 尚未发布到 CocoaPods trunk，
   您需要在 Podfile 中手动添加该依赖。详见 README 安装说明。
                        DESC

@@ -16,11 +16,13 @@
 
 ## ✨ 特性
 
-- 🚀 **高性能渲染** - 基于 TextKit 2，支持异步渲染和增量更新，流式渲染等，示例全部加载示例md内容渲染时间首次270ms左右,再次渲染120ms左右,MarkdownView库渲染同样内容超过400ms
+- 🚀 **高性能渲染** - 基于 TextKit 2，支持异步渲染和增量更新，流式渲染等，**秒开加载**，首屏渲染极速完成
+- ⚡ **低 CPU 占用** - 流式模式下支持嵌套样式展示，iPhone 17 Pro 模拟器上 CPU 峰值 < 56%，平均仅 30%
 - 🎨 **完整 Markdown 支持** - LaTeX协议公式、标题、列表、表格、代码块、引用、图片等
 - 🌈 **语法高亮** - 支持 20+ 种编程语言的代码高亮（Swift、Python、JavaScript 等）
 - 📑 **自动目录** - 自动提取标题生成可交互目录
 - 🎯 **高度可定制** - 字体、颜色、间距等全方位配置
+- 🔌 **自定义扩展** - 支持自定义行内语法解析和代码块渲染器（如 Mermaid 图表）
 - 🔗 **事件回调** - 链接点击、图片点击、目录导航
 - 📱 **iOS 原生** - 使用 UIKit 和 TextKit 2 构建，性能优异
 - 🌓 **深色模式** - 内置浅色和深色主题配置
@@ -495,6 +497,174 @@ scrollableMarkdownView.backToTableOfContentsSection()
     }
 ```
 
+## 🔌 自定义扩展
+
+MarkdownDisplayKit 支持自定义扩展，可以添加自己的 Markdown 语法和渲染。
+
+### 内置视频扩展
+
+在 `AppDelegate` 中注册视频扩展：
+
+```swift
+import MarkdownDisplayKit
+
+func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+    // 注册视频扩展
+    MarkdownCustomExtensionManager.shared.registerVideoExtension()
+    return true
+}
+```
+
+**语法**: `[video:文件名]`
+
+```markdown
+## 视频演示
+
+[video:myVideo]
+
+支持格式: .mov, .mp4, .m4v
+```
+
+**功能特性**:
+- 自动生成视频缩略图
+- 显示视频时长
+- 点击使用 QuickLook 播放
+
+### 创建自定义扩展
+
+实现三个协议来创建自定义扩展：
+
+#### 1. 自定义解析器
+
+```swift
+class MentionParser: MarkdownCustomParser {
+    let identifier = "mention"
+    let pattern = "@([a-zA-Z0-9_]+)"  // 正则模式
+
+    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
+        guard let range = Range(match.range(at: 1), in: text) else { return nil }
+        let username = String(text[range])
+
+        return CustomElementData(
+            type: "mention",
+            rawText: "@\(username)",
+            payload: ["username": username]
+        )
+    }
+}
+```
+
+#### 2. 自定义视图提供者
+
+```swift
+class MentionViewProvider: MarkdownCustomViewProvider {
+    let supportedType = "mention"
+
+    func createView(
+        for data: CustomElementData,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> UIView {
+        let label = UILabel()
+        label.text = data.rawText
+        label.textColor = .systemBlue
+        label.font = configuration.bodyFont
+        label.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.1)
+        label.layer.cornerRadius = 4
+        label.sizeToFit()
+        return label
+    }
+
+    func calculateSize(
+        for data: CustomElementData,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> CGSize {
+        let text = data.rawText as NSString
+        let size = text.size(withAttributes: [.font: configuration.bodyFont])
+        return CGSize(width: size.width + 8, height: size.height + 4)
+    }
+}
+```
+
+#### 3. 自定义事件处理器
+
+```swift
+class MentionActionHandler: MarkdownCustomActionHandler {
+    let supportedType = "mention"
+
+    func handleTap(data: CustomElementData, sourceView: UIView, presentingViewController: UIViewController?) {
+        guard let username = data.payload["username"] else { return }
+        print("跳转到用户主页: \(username)")
+    }
+}
+```
+
+#### 4. 注册扩展
+
+```swift
+let manager = MarkdownCustomExtensionManager.shared
+manager.register(parser: MentionParser())
+manager.register(viewProvider: MentionViewProvider())
+manager.register(actionHandler: MentionActionHandler())
+```
+
+### 支持的自定义语法格式
+
+| 扩展 | 语法 | 说明 |
+|------|------|------|
+| 视频 | `[video:文件名]` | 嵌入视频，支持 QuickLook 播放 |
+| @提及* | `@username` | 用户提及（示例） |
+| 表情* | `::emoji_name::` | 自定义表情（示例） |
+
+*示例实现，默认未包含
+
+### 代码块渲染器
+
+除了行内语法扩展，还支持自定义代码块渲染器，用于渲染特定语言的代码块：
+
+#### Mermaid 图表渲染器示例
+
+```swift
+public final class MermaidRenderer: MarkdownCodeBlockRenderer {
+    public let supportedLanguage = "mermaid"
+
+    public func renderCodeBlock(
+        code: String,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> UIView {
+        // 使用 WKWebView 渲染 Mermaid 图表
+        let view = MermaidWebView(code: code, frame: ...)
+        return view
+    }
+
+    public func calculateSize(
+        code: String,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> CGSize {
+        // 根据图表类型估算高度
+        return CGSize(width: containerWidth - 32, height: estimatedHeight)
+    }
+}
+```
+
+#### 注册代码块渲染器
+
+```swift
+let manager = MarkdownCustomExtensionManager.shared
+manager.register(codeBlockRenderer: MermaidRenderer())
+```
+
+**支持的图表类型**（通过 Mermaid.js）：
+- 流程图 (flowchart/graph)
+- 时序图 (sequenceDiagram)
+- 类图 (classDiagram)
+- 状态图 (stateDiagram)
+- 甘特图 (gantt)
+- 思维导图 (mindmap)
+
 ## 🐛 故障排除
 
 ### 1. 编译错误：找不到 UIKit
@@ -524,6 +694,13 @@ scrollableMarkdownView.backToTableOfContentsSection()
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 📝 更新日志
+
+### 1.4.0 (2025-12-31)
+
+- 🚀 **秒开优化** - 大幅优化加载速度，首屏渲染极速完成
+- ⚡ **CPU 优化** - 流式模式下增加嵌套样式展示后，CPU 使用率大幅降低（iPhone 17 Pro 模拟器峰值 < 56%，平均 30%）
+- 🔌 **自定义扩展增强** - 新增代码块渲染器协议 `MarkdownCodeBlockRenderer`，支持 Mermaid 等图表渲染
+- 🎨 **Mermaid 支持** - 示例项目新增 Mermaid 图表渲染器，支持流程图、思维导图等
 
 ### 1.0.0 (2025-12-15)
 

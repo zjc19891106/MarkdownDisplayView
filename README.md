@@ -13,11 +13,13 @@ A powerful iOS Markdown rendering component built on TextKit 2, providing smooth
 ![Streaming Rendering](./Effects/streaming.gif)
 
 ## ✨ Features
-- 🚀 **High-Performance Rendering** — Based on TextKit 2, supports asynchronous rendering, incremental updates, streaming rendering, etc. Initial full loading and rendering of the sample Markdown content completes in under 270 ms.Initial full loading and rendering of the sample Markdown content completes in under 270 ms. (compared to over 400ms for the MarkdownView library with the same content).
+- 🚀 **High-Performance Rendering** — Based on TextKit 2, supports asynchronous rendering, incremental updates, streaming rendering, etc. **Instant loading** with ultra-fast first screen rendering.
+- ⚡ **Low CPU Usage** — Streaming mode supports nested style rendering with CPU peak < 56% on iPhone 17 Pro simulator, averaging only 30%.
 - 🎨 **Full Markdown Support** — Formula of LaTeX protocol, Headings, lists, tables, code blocks, blockquotes, images, and more.
 - 🌈 **Syntax Highlighting** — Supports syntax highlighting for 20+ programming languages (Swift, Python, JavaScript, etc.).
 - 📑 **Automatic Table of Contents** — Automatically extracts headings to generate an interactive TOC.
 - 🎯 **Highly Customizable** — Comprehensive configuration for fonts, colors, spacing, etc.
+- 🔌 **Custom Extensions** — Support for custom inline syntax parsing and code block renderers (e.g., Mermaid diagrams).
 - 🔗 **Event Callbacks** — Link taps, image taps, TOC navigation.
 - 📱 **Native iOS** — Built with UIKit and TextKit 2 for excellent performance.
 - 🌓 **Dark Mode** — Built-in light and dark theme configurations.
@@ -477,6 +479,174 @@ scrollableMarkdownView.backToTableOfContentsSection()
     }
 ```
 
+## 🔌 Custom Extensions
+
+MarkdownDisplayKit supports custom extensions to add your own Markdown syntax and rendering.
+
+### Built-in Video Extension
+
+Register the video extension in `AppDelegate`:
+
+```swift
+import MarkdownDisplayKit
+
+func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+    // Register video extension
+    MarkdownCustomExtensionManager.shared.registerVideoExtension()
+    return true
+}
+```
+
+**Syntax**: `[video:filename]`
+
+```markdown
+## Video Demo
+
+[video:myVideo]
+
+Supported formats: .mov, .mp4, .m4v
+```
+
+**Features**:
+- Auto-generates video thumbnail
+- Displays video duration
+- Click to play with QuickLook
+
+### Creating Custom Extensions
+
+Implement three protocols to create your own extension:
+
+#### 1. Custom Parser
+
+```swift
+class MentionParser: MarkdownCustomParser {
+    let identifier = "mention"
+    let pattern = "@([a-zA-Z0-9_]+)"  // Regex pattern
+
+    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
+        guard let range = Range(match.range(at: 1), in: text) else { return nil }
+        let username = String(text[range])
+
+        return CustomElementData(
+            type: "mention",
+            rawText: "@\(username)",
+            payload: ["username": username]
+        )
+    }
+}
+```
+
+#### 2. Custom View Provider
+
+```swift
+class MentionViewProvider: MarkdownCustomViewProvider {
+    let supportedType = "mention"
+
+    func createView(
+        for data: CustomElementData,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> UIView {
+        let label = UILabel()
+        label.text = data.rawText
+        label.textColor = .systemBlue
+        label.font = configuration.bodyFont
+        label.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.1)
+        label.layer.cornerRadius = 4
+        label.sizeToFit()
+        return label
+    }
+
+    func calculateSize(
+        for data: CustomElementData,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> CGSize {
+        let text = data.rawText as NSString
+        let size = text.size(withAttributes: [.font: configuration.bodyFont])
+        return CGSize(width: size.width + 8, height: size.height + 4)
+    }
+}
+```
+
+#### 3. Custom Action Handler
+
+```swift
+class MentionActionHandler: MarkdownCustomActionHandler {
+    let supportedType = "mention"
+
+    func handleTap(data: CustomElementData, sourceView: UIView, presentingViewController: UIViewController?) {
+        guard let username = data.payload["username"] else { return }
+        print("Navigate to user profile: \(username)")
+    }
+}
+```
+
+#### 4. Register Extensions
+
+```swift
+let manager = MarkdownCustomExtensionManager.shared
+manager.register(parser: MentionParser())
+manager.register(viewProvider: MentionViewProvider())
+manager.register(actionHandler: MentionActionHandler())
+```
+
+### Supported Custom Syntax Patterns
+
+| Extension | Syntax | Description |
+|-----------|--------|-------------|
+| Video | `[video:filename]` | Embed video with QuickLook playback |
+| Mention* | `@username` | User mention (example) |
+| Emoji* | `::emoji_name::` | Custom emoji (example) |
+
+*Example implementations, not included by default
+
+### Code Block Renderers
+
+In addition to inline syntax extensions, you can also create custom code block renderers for specific languages:
+
+#### Mermaid Diagram Renderer Example
+
+```swift
+public final class MermaidRenderer: MarkdownCodeBlockRenderer {
+    public let supportedLanguage = "mermaid"
+
+    public func renderCodeBlock(
+        code: String,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> UIView {
+        // Use WKWebView to render Mermaid diagrams
+        let view = MermaidWebView(code: code, frame: ...)
+        return view
+    }
+
+    public func calculateSize(
+        code: String,
+        configuration: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> CGSize {
+        // Estimate height based on diagram type
+        return CGSize(width: containerWidth - 32, height: estimatedHeight)
+    }
+}
+```
+
+#### Register Code Block Renderer
+
+```swift
+let manager = MarkdownCustomExtensionManager.shared
+manager.register(codeBlockRenderer: MermaidRenderer())
+```
+
+**Supported Diagram Types** (via Mermaid.js):
+- Flowchart (flowchart/graph)
+- Sequence Diagram (sequenceDiagram)
+- Class Diagram (classDiagram)
+- State Diagram (stateDiagram)
+- Gantt Chart (gantt)
+- Mind Map (mindmap)
+
 ## 🐛 Troubleshooting
 
 ### 1. Build Error: Cannot find UIKit
@@ -506,6 +676,13 @@ scrollableMarkdownView.backToTableOfContentsSection()
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## 📝 Changelog
+
+### 1.4.0 (2025-12-31)
+
+- 🚀 **Instant Loading** - Significantly optimized loading speed with ultra-fast first screen rendering
+- ⚡ **CPU Optimization** - Streaming mode with nested style rendering now uses much less CPU (iPhone 17 Pro simulator peak < 56%, average 30%)
+- 🔌 **Enhanced Custom Extensions** - New `MarkdownCodeBlockRenderer` protocol for custom code block rendering (e.g., Mermaid diagrams)
+- 🎨 **Mermaid Support** - Example project now includes Mermaid diagram renderer supporting flowcharts, mind maps, and more
 
 ### 1.0.0 (2025-12-15)
 

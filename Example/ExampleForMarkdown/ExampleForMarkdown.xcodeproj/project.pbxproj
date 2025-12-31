@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */; };
+		05FFEF752F04F01D000049DC /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FFEF742F04F01D000049DC /* MarkdownDisplayView */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +42,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */,
+				05FFEF752F04F01D000049DC /* MarkdownDisplayView in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -84,6 +86,7 @@
 			name = ExampleForMarkdown;
 			packageProductDependencies = (
 				05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */,
+				05FFEF742F04F01D000049DC /* MarkdownDisplayView */,
 			);
 			productName = ExampleForMarkdown;
 			productReference = 05FAF23D2EF0060D00B7F56E /* ExampleForMarkdown.app */;
@@ -114,7 +117,7 @@
 			mainGroup = 05FAF2342EF0060D00B7F56E;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				05FB02F92EF94E24003DB405 /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */,
+				05FFEF732F04F01D000049DC /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 05FAF23E2EF0060D00B7F56E /* Products */;
@@ -362,7 +365,7 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		05FB02F92EF94E24003DB405 /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */ = {
+		05FFEF732F04F01D000049DC /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../../MarkdownDisplayView;
 		};
@@ -370,6 +373,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownDisplayView;
+		};
+		05FFEF742F04F01D000049DC /* MarkdownDisplayView */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MarkdownDisplayView;
 		};

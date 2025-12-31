@@ -29,12 +29,13 @@ public enum MarkdownRenderElement: Equatable {
     case heading(id: String, text: NSAttributedString)
     indirect case quote(children: [MarkdownRenderElement], level: Int)  // 支持嵌套块级元素
     case thematicBreak
-    case codeBlock(NSAttributedString)
+    case codeBlock(language: String?, code: NSAttributedString)  // 添加语言信息支持自定义渲染
     case image(source: String, altText: String)
     case latex(String)  // LaTeX 公式
     indirect case details(summary: String, children: [MarkdownRenderElement])
     case rawHTML(String)
     case list(items: [ListNodeItem], level: Int)
+    case custom(CustomElementData)  // 自定义扩展元素
 }
 
 // MARK: - MarkdownTOCItemTK2

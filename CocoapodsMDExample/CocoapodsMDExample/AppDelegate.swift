@@ -6,6 +6,7 @@
 //
 
 import UIKit
+import MarkdownDisplayKit
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -13,7 +14,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 注册自定义扩展示例
+        MarkdownCustomExtensionManager.shared.registerVideoExtension()   // 视频扩展（行内语法）
+        MarkdownCustomExtensionManager.shared.registerMermaidRenderer()  // Mermaid 渲染器（代码块）
         return true
     }
 
