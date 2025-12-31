@@ -119,7 +119,30 @@ extension ScrollableMarkdownViewTextKit {
     public func finishStreaming() {
         markdownView.finishStreaming()
     }
-    
+
+    // MARK: - 真流式 API（Real Streaming）
+
+    /// 开始真流式模式
+    /// - Parameters:
+    ///   - autoScrollBottom: 是否自动滚动到底部
+    ///   - onComplete: 流式完成回调
+    public func beginRealStreaming(autoScrollBottom: Bool = true, onComplete: (() -> Void)? = nil) {
+        autoScrollOnStreaming = autoScrollBottom
+        markdownView.beginRealStreaming(autoScrollBottom: autoScrollBottom, onComplete: onComplete)
+    }
+
+    /// 追加一个完整的 Markdown 块
+    /// - Parameter block: 完整的 Markdown 块（如标题+内容、段落、代码块等）
+    /// - Note: 每个块应该是完整的 Markdown 结构，不会在语法中间截断
+    public func appendBlock(_ block: String) {
+        markdownView.appendBlock(block)
+    }
+
+    /// 结束真流式模式
+    public func endRealStreaming() {
+        markdownView.endRealStreaming()
+    }
+
     // 返回目录按钮点击
     @objc func backToTOCTapped() {
         if markdownView.hasTableOfContentsSection {
