@@ -770,9 +770,9 @@ class TableViewStreamingViewController: UIViewController {
                     // 我们现在的策略是：保持当前 UI (Loading状态) 不变，直接 startStreaming。
                     
                     // 绑定高度回调
-
-                    cell.onContentHeightChanged = { [weak self, weak cell] in
-                        guard let self = self, let cell = cell else { return }
+                    // ⚠️ 使用数据源的 isStreaming 状态，而不是 Cell 的状态
+                    cell.onContentHeightChanged = { [weak self] in
+                        guard let self = self else { return }
 
                         // ⭐️ 核心修复 2：去除隐式动画
                         // performBatchUpdates 默认带有动画，高频调用会导致闪烁。
@@ -781,8 +781,9 @@ class TableViewStreamingViewController: UIViewController {
                             self.tableView.performBatchUpdates(nil, completion: nil)
                         }
 
-                        // ⭐️ 关键修复：只在流式输出期间才自动滚动
-                        if cell.isStreaming {
+                        // ⭐️ 关键修复：使用数据源状态判断，避免 Cell 状态被复用重置
+                        if botIndexPath.row < self.messages.count,
+                           self.messages[botIndexPath.row].isStreaming {
                             self.isSending = false
                             self.scrollToBottom(animated: false)
                         }
@@ -849,16 +850,17 @@ class TableViewStreamingViewController: UIViewController {
         guard let cell = tableView.cellForRow(at: indexPath) as? ChatMarkdownCell else { return }
         
         // 3. 配置高度变化回调
-        cell.onContentHeightChanged = { [weak self, weak cell] in
-            guard let self = self, let cell = cell else { return }
+        // ⚠️ 使用数据源的 isStreaming 状态，而不是 Cell 的状态
+        cell.onContentHeightChanged = { [weak self] in
+            guard let self = self else { return }
 
             // ⭐️ 核心逻辑：通知 TableView 高度变了，请重新布局
             // 使用 performBatchUpdates(nil) 不会 reload cell，只会平滑调整高度
             self.tableView.performBatchUpdates(nil, completion: nil)
 
-            // ⭐️ 关键修复：只在流式输出期间才自动滚动
-            // 用户交互（折叠/展开）不应该触发滚动
-            if cell.isStreaming {
+            // ⭐️ 关键修复：使用数据源状态判断，避免 Cell 状态被复用重置
+            if indexPath.row < self.messages.count,
+               self.messages[indexPath.row].isStreaming {
                 self.scrollToBottom(animated: false)
             }
         }
