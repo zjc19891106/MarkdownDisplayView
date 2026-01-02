@@ -139,8 +139,9 @@ extension ScrollableMarkdownViewTextKit {
     }
 
     /// 结束真流式模式
-    public func endRealStreaming() {
-        markdownView.endRealStreaming()
+    /// - Parameter completion: 完成回调，在 TypewriterEngine 完全结束且脚注渲染完毕后触发
+    public func endRealStreaming(completion: (() -> Void)? = nil) {
+        markdownView.endRealStreaming(completion: completion)
     }
 
     // 返回目录按钮点击

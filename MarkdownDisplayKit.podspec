@@ -8,7 +8,7 @@
 
 Pod::Spec.new do |s|
   s.name             = 'MarkdownDisplayKit'
-  s.version          = '1.4.0'
+  s.version          = '1.4.1'
   s.summary          = '一个功能强大的 iOS Markdown 渲染组件，基于 TextKit 2 构建，提供流畅的渲染性能和丰富的自定义选项。支持自定义样式,秒加载渲染readme'
 
   s.description      = <<-DESC

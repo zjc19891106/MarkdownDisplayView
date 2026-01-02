@@ -993,23 +993,29 @@ final class MarkdownParser: MarkdownParserProtocol {
     }
     
     // MARK: - Code Block
-    
+
     private func renderCodeBlock(_ codeBlock: CodeBlock) -> NSMutableAttributedString {
         isInCodeBlock = true
         defer { isInCodeBlock = false }
-        
+
         let code = codeBlock.code.trimmingCharacters(in: .newlines)
         let language = codeBlock.language
-        
+
+        // [CODEBLOCK_DEBUG] 追踪代码块解析
+        print("[CODEBLOCK_DEBUG] 🔍 renderCodeBlock: lang=\(language ?? "nil"), codeLength=\(code.count), codePreview=\(code.prefix(50).replacingOccurrences(of: "\n", with: "⏎"))")
+
         // 应用语法高亮
         let highlightedCode = applySyntaxHighlighting(to: code, language: language)
         let result = NSMutableAttributedString(attributedString: highlightedCode)
-        
+
+        // [CODEBLOCK_DEBUG] 追踪高亮后长度
+        print("[CODEBLOCK_DEBUG] 🔍 renderCodeBlock: highlightedLength=\(result.length)")
+
         // 添加段落样式
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineSpacing = 4
         result.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: result.length))
-        
+
         return result
     }
 

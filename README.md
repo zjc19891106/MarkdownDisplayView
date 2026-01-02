@@ -677,6 +677,10 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## 📝 Changelog
 
+### 1.4.1 (2026-01-02)
+
+- 🐛 **Bug Fix** - Fixed code blocks not rendering properly in real streaming mode when content arrives in multiple chunks
+
 ### 1.4.0 (2025-12-31)
 
 - 🚀 **Instant Loading** - Significantly optimized loading speed with ultra-fast first screen rendering

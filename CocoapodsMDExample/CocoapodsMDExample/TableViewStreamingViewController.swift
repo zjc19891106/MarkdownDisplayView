@@ -409,14 +409,14 @@ class ChatMarkdownCell: UITableViewCell {
 
     /// 结束真流式
     func endRealStreaming() {
-        markdownView.endRealStreaming()
-
-        // ⚠️ 延迟设置 isCurrentlyStreaming = false
-        // 给 TypewriterEngine 足够时间完成显示
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.isCurrentlyStreaming = false
-            self?.realStreamCompletion?()
-            self?.realStreamCompletion = nil
+        // ⭐️ 使用 completion 回调替代固定延迟
+        // 确保在 TypewriterEngine 完全结束后才触发完成逻辑
+        markdownView.endRealStreaming { [weak self] in
+            guard let self = self else { return }
+            self.isCurrentlyStreaming = false
+            self.realStreamCompletion?()
+            self.realStreamCompletion = nil
+            print("[FOOTNOTE_DEBUG] 🔴 Cell.endRealStreaming completion called")
         }
     }
 
@@ -512,6 +512,7 @@ class TableViewStreamingViewController: UIViewController {
     }
     
     @objc private func stopStreaming() {
+        print("[FOOTNOTE_DEBUG] ⛔️ stopStreaming button pressed!")
         // 停止真流式
         stopRealStream()
 
@@ -702,12 +703,16 @@ class TableViewStreamingViewController: UIViewController {
 
     /// 启动真流式定时器
     private func startRealStreamTimer() {
+        print("[FOOTNOTE_DEBUG] ⏰ startRealStreamTimer called, blocks.count=\(realStreamBlocks.count), blockIndex=\(realStreamBlockIndex)")
+
         // 每 0.3 秒发送一个块，模拟网络数据到达
         realStreamTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] timer in
             guard let self = self else {
                 timer.invalidate()
                 return
             }
+
+            print("[FOOTNOTE_DEBUG] ⏰ Timer fired, blockIndex=\(self.realStreamBlockIndex), blocks.count=\(self.realStreamBlocks.count), cell=\(self.realStreamCell != nil ? "exists" : "nil")")
 
             if self.realStreamBlockIndex < self.realStreamBlocks.count {
                 let block = self.realStreamBlocks[self.realStreamBlockIndex]
@@ -716,6 +721,7 @@ class TableViewStreamingViewController: UIViewController {
                 self.realStreamBlockIndex += 1
             } else {
                 // 所有块发送完毕
+                print("[FOOTNOTE_DEBUG] ⏰ Timer ending, calling endRealStreaming")
                 timer.invalidate()
                 self.realStreamTimer = nil
                 self.realStreamCell?.endRealStreaming()
@@ -726,6 +732,7 @@ class TableViewStreamingViewController: UIViewController {
 
     /// 停止真流式
     private func stopRealStream() {
+        print("[FOOTNOTE_DEBUG] ⛔️ stopRealStream called!")
         realStreamTimer?.invalidate()
         realStreamTimer = nil
         realStreamCell?.endRealStreaming()

@@ -521,7 +521,8 @@ class TypewriterEngine {
         let isAtomicBlock = (view is UIImageView) ||
                             (view.accessibilityIdentifier?.hasPrefix("LatexContainer") == true) ||
                             (view.accessibilityIdentifier?.hasPrefix("latex_") == true) ||
-                            (view.accessibilityIdentifier == "FootnoteContainer")
+                            (view.accessibilityIdentifier == "FootnoteContainer") ||
+                            (view.accessibilityIdentifier == "CodeBlockContainer")  // ⭐️ 新增：代码块作为原子块
         if view.subviews.count > 0 && !isAtomicBlock {
             print("[TYPEWRITER] 📦 递归容器: \(type(of: view)), 子视图数: \(view.subviews.count), 子视图类型: \(view.subviews.map { type(of: $0) })")
             for subview in view.subviews {
@@ -556,7 +557,67 @@ class TypewriterEngine {
     var isIdle: Bool {
         return taskQueue.isEmpty && !isRunning
     }
-    
+
+    /// ⭐️ 检查视图是否在队列中
+    func isViewInQueue(_ view: UIView) -> Bool {
+        for task in taskQueue {
+            switch task {
+            case .show(let v):
+                if v === view { return true }
+            case .text(let tv):
+                if tv === view { return true }
+            case .label(let lbl):
+                if lbl === view { return true }
+            case .block(let bv):
+                if bv === view { return true }
+            }
+        }
+        return false
+    }
+
+    /// ⭐️ 替换队列中的视图（替换所有匹配的任务）
+    func replaceView(_ oldView: UIView, with newView: UIView) {
+        var replacedCount = 0
+
+        for i in 0..<taskQueue.count {
+            switch taskQueue[i] {
+            case .show(let v):
+                if v === oldView {
+                    newView.alpha = 0
+                    taskQueue[i] = .show(newView)
+                    replacedCount += 1
+                    print("[TYPEWRITER] 🔄 Replaced .show task view")
+                }
+            case .text(let tv):
+                if tv === oldView, let newTv = newView.subviews.compactMap({ $0 as? MarkdownTextViewTK2 }).first ?? (newView as? MarkdownTextViewTK2) {
+                    newTv.prepareForTypewriter()
+                    taskQueue[i] = .text(newTv)
+                    replacedCount += 1
+                    print("[TYPEWRITER] 🔄 Replaced .text task view")
+                }
+            case .label(let lbl):
+                if lbl === oldView, let newLbl = newView as? UILabel {
+                    taskQueue[i] = .label(newLbl)
+                    replacedCount += 1
+                    print("[TYPEWRITER] 🔄 Replaced .label task view")
+                }
+            case .block(let bv):
+                if bv === oldView {
+                    newView.alpha = 0
+                    taskQueue[i] = .block(newView)
+                    replacedCount += 1
+                    print("[TYPEWRITER] 🔄 Replaced .block task view")
+                }
+            }
+        }
+
+        if replacedCount == 0 {
+            print("[TYPEWRITER] ⚠️ View not found in queue for replacement")
+        } else {
+            print("[TYPEWRITER] ✅ Replaced \(replacedCount) tasks for view")
+        }
+    }
+
     private func feedWatchdog() {
         watchdogTimer?.invalidate()
         // ⚡️ 延长看门狗时间到 4.0 秒，防止复杂渲染（如LaTeX）卡顿导致提前结束
@@ -626,6 +687,11 @@ class TypewriterEngine {
             let viewType = view.accessibilityIdentifier ?? String(describing: type(of: view))
             print("[STREAM] 👁️ 视图开始显示: \(viewType), tag=\(view.tag)")
 
+            // [CODEBLOCK_DEBUG] 特殊日志：追踪代码块显示
+            if view.accessibilityIdentifier == "CodeBlockContainer" {
+                print("[CODEBLOCK_DEBUG] 🎬 CodeBlock .show task executing: frame=\(view.frame), subviews=\(view.subviews.count)")
+            }
+
             // ⚡️ 关键修复：视图显示后立即通知高度变化
             onLayoutChange?()
             
@@ -641,6 +707,11 @@ class TypewriterEngine {
             // ⭐️ 添加日志：追踪块级视图显示时机
             let blockViewType = view.accessibilityIdentifier ?? String(describing: type(of: view))
             let now = CFAbsoluteTimeGetCurrent()
+
+            // [CODEBLOCK_DEBUG] 特殊日志：追踪代码块显示
+            if view.accessibilityIdentifier == "CodeBlockContainer" {
+                print("[CODEBLOCK_DEBUG] 🎬 CodeBlock .block task executing: alpha=\(view.alpha), isHidden=\(view.isHidden), frame=\(view.frame)")
+            }
 
             // 解析时间戳
             // 格式: LatexContainer_<streamStartTime>_<createTime> 或 DetailsContainer_<streamStartTime>_<createTime>
@@ -785,6 +856,9 @@ public final class MarkdownViewTextKit: UIView {
         engine.onComplete = { [weak self] in
             // 队列播放完毕的回调
             print("✅ [Typewriter] All animations completed")
+
+            // ⭐️ [FOOTNOTE_DEBUG] 调试日志
+            print("[FOOTNOTE_DEBUG] 🔔 TypewriterEngine.onComplete triggered, isRealStreamingMode=\(self?.isRealStreamingMode ?? false), isStreaming=\(self?.isStreaming ?? false)")
 
             // ⚡️ 流式优化：打字机动画完成后渲染脚注
             self?.renderFootnotesIfPending()
@@ -2618,6 +2692,12 @@ public final class MarkdownViewTextKit: UIView {
     }
 
     private func updateFootnotes(_ footnotes: [MarkdownFootnote], width: CGFloat, newElementCount: Int) {
+        // ⭐️ [FOOTNOTE_DEBUG] 关键日志：谁调用了 updateFootnotes
+        print("[FOOTNOTE_DEBUG] 🚨 updateFootnotes CALLED! count=\(footnotes.count), isRealStreamingMode=\(isRealStreamingMode), isStreaming=\(isStreaming)")
+        // 打印调用栈的前几帧
+        let callStack = Thread.callStackSymbols.prefix(8).joined(separator: "\n")
+        print("[FOOTNOTE_DEBUG] 📚 Call stack:\n\(callStack)")
+
         // ⚡️ 使用无动画更新，避免闪烁
         UIView.performWithoutAnimation {
             // 此时 contentStackView 的 subviews 数量应该是 newElementCount (如果不含脚注)
@@ -3242,11 +3322,17 @@ public final class MarkdownViewTextKit: UIView {
         container.layer.cornerRadius = 8
         container.layer.masksToBounds = true
         container.translatesAutoresizingMaskIntoConstraints = false
+        // [CODEBLOCK_DEBUG] 添加标识符，便于调试
+        container.accessibilityIdentifier = "CodeBlockContainer"
 
         let textView = MarkdownTextViewTK2()
         textView.attributedText = attributedString
         textView.backgroundColor = .clear
         textView.translatesAutoresizingMaskIntoConstraints = false
+        // [CODEBLOCK_DEBUG] 添加标识符
+        textView.accessibilityIdentifier = "CodeBlockTextView"
+
+        print("[CODEBLOCK_DEBUG] 🏗️ createCodeBlockView: width=\(width), textLength=\(attributedString.length)")
 
         // 🔥 核心修复:立即应用布局,计算文本实际可用宽度(减去 padding)
         let codeBlockWidth = max(0, width - 24)  // left 12 + right 12
@@ -3912,8 +3998,13 @@ public final class MarkdownViewTextKit: UIView {
     }
     
     // MARK: - Footnote View
-    
+
     private func createFootnoteView(footnotes: [MarkdownFootnote], width: CGFloat) -> UIView {
+        // [FOOTNOTE_DEBUG] 脚注视图创建
+        print("[FOOTNOTE_DEBUG] 🎨 createFootnoteView called! count=\(footnotes.count), isRealStreamingMode=\(isRealStreamingMode)")
+        let callStack = Thread.callStackSymbols.prefix(6).joined(separator: "\n")
+        print("[FOOTNOTE_DEBUG] 🎨 Call stack:\n\(callStack)")
+
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         // ⭐️ 标记为原子块，让打字机引擎将其视为整体淡入，而不是逐字打印
@@ -5122,12 +5213,24 @@ public final class MarkdownViewTextKit: UIView {
             }
         }
     }
-    
+
     /// ⚡️ 如果有待渲染的脚注，则渲染（在打字机动画完成后调用）
     private func renderFootnotesIfPending() {
-        guard pendingFootnoteRender else { return }
+        print("[FOOTNOTE_DEBUG] 📍 renderFootnotesIfPending called, isRealStreamingMode=\(isRealStreamingMode), pendingFootnoteRender=\(pendingFootnoteRender)")
 
-        print("🔖 [Footnotes] Rendering deferred footnotes after typewriter animations")
+        // ⭐️ 关键修复：真流式模式下不在这里渲染脚注
+        // 脚注应该在 endRealStreaming() 中统一处理
+        guard !isRealStreamingMode else {
+            print("[FOOTNOTE_DEBUG] ⏭️ Skipping - in real streaming mode")
+            return
+        }
+
+        guard pendingFootnoteRender else {
+            print("[FOOTNOTE_DEBUG] ⏭️ Skipping - pendingFootnoteRender is false")
+            return
+        }
+
+        print("[FOOTNOTE_DEBUG] ⚠️ WILL RENDER FOOTNOTES NOW!")
         pendingFootnoteRender = false
         renderFootnotesAfterStreaming()
 
@@ -5288,12 +5391,15 @@ public final class MarkdownViewTextKit: UIView {
     ///   - autoScrollBottom: 是否自动滚动到底部
     ///   - onComplete: 流式完成回调
     public func beginRealStreaming(autoScrollBottom: Bool = true, onComplete: (() -> Void)? = nil) {
+        print("[FOOTNOTE_DEBUG] 🟢 beginRealStreaming called")
+
         // 停止任何现有流式
         stopStreaming()
 
         // 初始化真流式状态
         isRealStreamingMode = true
         isStreaming = true
+        print("[FOOTNOTE_DEBUG] 🟢 isRealStreamingMode set to TRUE")
         autoScrollEnabled = autoScrollBottom
         realStreamAccumulatedText = ""
         realStreamParsedElementCount = 0
@@ -5344,10 +5450,17 @@ public final class MarkdownViewTextKit: UIView {
 
             let parseStart = CFAbsoluteTimeGetCurrent()
 
-            // ⚠️ 真流式模式下，不预处理脚注，避免脚注提前渲染
-            // 脚注将在 endRealStreaming() 中统一处理
-            // 直接使用原始文本，脚注定义 [^1]: xxx 会被忽略（不会作为普通文本显示）
-            let processedText = textToParse
+            // ⭐️ 关键修复：必须预处理脚注，移除脚注定义（如 [^1]: xxx）
+            // 否则脚注定义会被 MarkdownParser 当作普通文本解析并渲染
+            // 注意：这里只移除脚注定义，不保存脚注用于渲染
+            // 脚注的实际渲染在 endRealStreaming() 中进行
+            let (processedText, removedFootnotes) = self.preprocessFootnotes(textToParse)
+
+            // [FOOTNOTE_DEBUG] 检查脚注预处理
+            if !removedFootnotes.isEmpty {
+                print("[FOOTNOTE_DEBUG] 📋 parseAndDisplayNewContent: preprocessFootnotes removed \(removedFootnotes.count) footnotes")
+                print("[FOOTNOTE_DEBUG] 📋 Original length: \(textToParse.count), Processed length: \(processedText.count)")
+            }
 
             // 解析 Markdown
             let config = self.configuration
@@ -5365,6 +5478,25 @@ public final class MarkdownViewTextKit: UIView {
                 let addedElements = Array(elements.dropFirst(previousElementCount))
 
                 print("✅ [RealStream] Parsed: +\(addedElements.count) elements (total: \(newElementCount)), time: \(String(format: "%.1f", parseDuration))ms")
+
+                // [CODEBLOCK_DEBUG] 打印新增元素类型
+                for (idx, elem) in addedElements.enumerated() {
+                    switch elem {
+                    case .codeBlock(let lang, _):
+                        print("[CODEBLOCK_DEBUG] 🟢 Added codeBlock[\(previousElementCount + idx)]: lang=\(lang ?? "nil")")
+                    case .heading(let id, let attr):
+                        print("[CODEBLOCK_DEBUG] 📌 Added heading[\(previousElementCount + idx)]: id=\(id), text=\(attr.string.prefix(30))")
+                    case .attributedText(let attr):
+                        let preview = attr.string.prefix(50).replacingOccurrences(of: "\n", with: "⏎")
+                        print("[CODEBLOCK_DEBUG] 📝 Added text[\(previousElementCount + idx)]: \(preview)")
+                    default:
+                        print("[CODEBLOCK_DEBUG] ➕ Added element[\(previousElementCount + idx)]: \(String(describing: elem).prefix(50))")
+                    }
+                }
+
+                // ⭐️ 关键修复：检测已有元素内容变化并更新视图
+                // 解决代码块分块到达时第一次为空、后续内容不更新的问题
+                self.updateExistingElementsIfNeeded(elements: elements, previousCount: previousElementCount)
 
                 // 更新状态（不更新脚注，脚注在 endRealStreaming 中处理）
                 self.realStreamParsedElementCount = newElementCount
@@ -5423,36 +5555,159 @@ public final class MarkdownViewTextKit: UIView {
         }
     }
 
+    /// 检测并更新已有元素的内容变化
+    /// 解决代码块、LaTeX 等块级元素分块到达时内容不更新的问题
+    private func updateExistingElementsIfNeeded(elements: [MarkdownRenderElement], previousCount: Int) {
+        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+
+        // 只检查已有的元素（索引 < previousCount）
+        for i in 0..<min(previousCount, elements.count, oldElements.count) {
+            let newElement = elements[i]
+            let oldElement = oldElements[i]
+
+            // 检查代码块内容是否有变化（长度增加）
+            if case .codeBlock(let newLang, let newAttr) = newElement,
+               case .codeBlock(_, let oldAttr) = oldElement {
+                // 如果新内容比旧内容长，需要更新视图
+                if newAttr.length > oldAttr.length {
+                    print("[CODEBLOCK_DEBUG] 🔄 Updating codeBlock[\(i)]: \(oldAttr.length) -> \(newAttr.length) chars, lang=\(newLang ?? "nil")")
+                    updateElementView(at: i, with: newElement, containerWidth: containerWidth)
+                    oldElements[i] = newElement
+                }
+            }
+
+            // 检查 LaTeX 内容是否有变化
+            if case .latex(let newLatex) = newElement,
+               case .latex(let oldLatex) = oldElement {
+                if newLatex.count > oldLatex.count {
+                    print("[CODEBLOCK_DEBUG] 🔄 Updating latex[\(i)]: \(oldLatex.count) -> \(newLatex.count) chars")
+                    updateElementView(at: i, with: newElement, containerWidth: containerWidth)
+                    oldElements[i] = newElement
+                }
+            }
+
+            // 检查 attributedText 内容变化
+            if case .attributedText(let newAttr) = newElement,
+               case .attributedText(let oldAttr) = oldElement {
+                if newAttr.length > oldAttr.length {
+                    print("[CODEBLOCK_DEBUG] 🔄 Updating text[\(i)]: \(oldAttr.length) -> \(newAttr.length) chars")
+                    updateElementView(at: i, with: newElement, containerWidth: containerWidth)
+                    oldElements[i] = newElement
+                }
+            }
+        }
+    }
+
+    /// 更新指定索引处的元素视图
+    private func updateElementView(at index: Int, with element: MarkdownRenderElement, containerWidth: CGFloat) {
+        let viewTag = 1000 + index
+
+        // 查找对应的视图
+        guard let oldView = contentStackView.arrangedSubviews.first(where: { $0.tag == viewTag }) else {
+            print("[CODEBLOCK_DEBUG] ⚠️ Cannot find view with tag \(viewTag) for update")
+            return
+        }
+
+        // 获取旧视图在 StackView 中的索引
+        guard let stackIndex = contentStackView.arrangedSubviews.firstIndex(of: oldView) else {
+            print("[CODEBLOCK_DEBUG] ⚠️ Cannot find stackIndex for view with tag \(viewTag)")
+            return
+        }
+
+        // 创建新视图
+        let newView = createView(for: element, containerWidth: containerWidth)
+        newView.tag = viewTag
+
+        // 检查旧视图是否在 TypewriterEngine 队列中
+        let wasInQueue = typewriterEngine.isViewInQueue(oldView)
+        let wasHidden = oldView.isHidden
+
+        // 替换视图
+        oldView.removeFromSuperview()
+        contentStackView.insertArrangedSubview(newView, at: stackIndex)
+
+        // 如果启用打字机效果且原视图还在队列中，将新视图加入队列
+        if enableTypewriterEffect && wasInQueue {
+            newView.isHidden = wasHidden
+            typewriterEngine.replaceView(oldView, with: newView)
+        }
+
+        print("[CODEBLOCK_DEBUG] ✅ View[\(index)] updated at stackIndex=\(stackIndex)")
+    }
+
     /// 结束真流式模式
-    public func endRealStreaming() {
-        guard isRealStreamingMode else { return }
+    /// - Parameter completion: 完成回调，在 TypewriterEngine 完全结束且脚注渲染完毕后触发
+    public func endRealStreaming(completion: (() -> Void)? = nil) {
+        print("[FOOTNOTE_DEBUG] 🔴 endRealStreaming called, isRealStreamingMode=\(isRealStreamingMode)")
+        guard isRealStreamingMode else {
+            completion?()
+            return
+        }
 
         print("🎉 [RealStream] Ending real streaming mode")
 
         // 更新 markdown 属性（用于后续非流式访问）
         markdown = realStreamAccumulatedText
 
-        // ⚠️ 在结束时统一处理脚注
+        // ⚠️ 解析脚注，但延迟到 TypewriterEngine 完成后再渲染
         let (_, footnotes) = preprocessFootnotes(realStreamAccumulatedText)
-        if !footnotes.isEmpty {
-            let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-            updateFootnotes(footnotes, width: containerWidth, newElementCount: oldElements.count)
-            print("📝 [RealStream] Processed \(footnotes.count) footnotes at end")
-        }
+        print("[FOOTNOTE_DEBUG] 🔴 endRealStreaming parsed \(footnotes.count) footnotes, will defer rendering")
 
-        // 重置状态
-        isRealStreamingMode = false
-        isStreaming = false
-
-        // 触发完成回调
-        realStreamOnComplete?()
+        // ⭐️ 关键修复：保存脚注和完成回调，等待 TypewriterEngine 完成后统一处理
+        let pendingFootnotes = footnotes
+        let pendingCompletion = realStreamOnComplete
+        let externalCompletion = completion  // ⭐️ 新增：保存外部传入的 completion
         realStreamOnComplete = nil
 
-        // 通知最终高度
-        notifyHeightChange()
+        // 定义收尾逻辑
+        let finishBlock: () -> Void = { [weak self] in
+            guard let self = self else {
+                externalCompletion?()
+                return
+            }
 
-        let elapsed = (CFAbsoluteTimeGetCurrent() - streamingStartTimestamp) * 1000
-        print("✅ [RealStream] Completed in \(String(format: "%.1f", elapsed))ms")
+            print("[FOOTNOTE_DEBUG] 🔴 finishBlock executing, rendering \(pendingFootnotes.count) footnotes")
+
+            // 1. 先渲染脚注（此时 TypewriterEngine 已完成，内容已全部显示）
+            if !pendingFootnotes.isEmpty {
+                let containerWidth = self.bounds.width > 0 ? self.bounds.width : UIScreen.main.bounds.width - 32
+                self.updateFootnotes(pendingFootnotes, width: containerWidth, newElementCount: self.oldElements.count)
+                print("📝 [RealStream] Processed \(pendingFootnotes.count) footnotes at end")
+            }
+
+            // 2. 重置状态
+            self.isRealStreamingMode = false
+            self.isStreaming = false
+            print("[FOOTNOTE_DEBUG] 🔴 isRealStreamingMode set to FALSE")
+
+            // 3. 通知最终高度
+            self.notifyHeightChange()
+
+            // 4. 触发完成回调（先内部回调，再外部回调）
+            pendingCompletion?()
+            externalCompletion?()
+
+            let elapsed = (CFAbsoluteTimeGetCurrent() - self.streamingStartTimestamp) * 1000
+            print("✅ [RealStream] Completed in \(String(format: "%.1f", elapsed))ms")
+        }
+
+        // ⭐️ 关键检查：如果 TypewriterEngine 已经空闲，直接执行收尾逻辑
+        if typewriterEngine.isIdle {
+            print("[FOOTNOTE_DEBUG] 🔴 TypewriterEngine already idle, executing finishBlock immediately")
+            finishBlock()
+        } else {
+            // TypewriterEngine 还在运行，等待其完成
+            print("[FOOTNOTE_DEBUG] 🔴 TypewriterEngine still running, waiting for completion")
+            let originalOnComplete = typewriterEngine.onComplete
+            typewriterEngine.onComplete = { [weak self] in
+                // 恢复原回调
+                self?.typewriterEngine.onComplete = originalOnComplete
+                originalOnComplete?()
+
+                // 执行收尾逻辑
+                finishBlock()
+            }
+        }
     }
 
     // MARK: - ⭐️ 暂停/恢复显示 API
