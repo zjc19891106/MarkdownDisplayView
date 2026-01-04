@@ -265,6 +265,15 @@ public final class MarkdownViewTextKit: UIView {
     /// 是否正在显示等待动画
     private var isShowingWaitingIndicator: Bool = false
 
+    /// ⭐️ 等待检测定时器（检测 TypewriterEngine 空闲且无新数据到达）
+    private var waitingDetectionTimer: Timer?
+
+    /// ⭐️ 上次收到数据的时间戳
+    private var lastDataReceivedTime: CFAbsoluteTime = 0
+
+    /// ⭐️ 等待动画显示延迟（秒）- TypewriterEngine 空闲多久后显示等待动画
+    private let waitingIndicatorDelay: TimeInterval = 0.5
+
     // MARK: - Initialization
 
     public override init(frame: CGRect) {
@@ -4595,7 +4604,61 @@ public final class MarkdownViewTextKit: UIView {
 
     // MARK: - 等待动画控制
 
-    /// 更新等待动画显示状态
+    /// ⭐️ 启动等待检测（在真流式开始时调用）
+    private func startWaitingDetection() {
+        stopWaitingDetection()
+        lastDataReceivedTime = CFAbsoluteTimeGetCurrent()
+
+        // 每 0.2 秒检测一次是否需要显示等待动画
+        waitingDetectionTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            self?.checkAndUpdateWaitingIndicator()
+        }
+    }
+
+    /// ⭐️ 停止等待检测
+    private func stopWaitingDetection() {
+        waitingDetectionTimer?.invalidate()
+        waitingDetectionTimer = nil
+    }
+
+    /// ⭐️ 检测并更新等待动画状态
+    /// 只有当 TypewriterEngine 空闲且超过延迟时间未收到新数据时才显示
+    private func checkAndUpdateWaitingIndicator() {
+        guard isRealStreamingMode else {
+            hideWaitingIndicator()
+            return
+        }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let timeSinceLastData = now - lastDataReceivedTime
+        let isEngineIdle = typewriterEngine.isIdle
+
+        // ⭐️ 调试日志
+        print("[WaitingIndicator] 检测: isEngineIdle=\(isEngineIdle), timeSinceLastData=\(String(format: "%.2f", timeSinceLastData))s, delay=\(waitingIndicatorDelay)s, isShowing=\(isShowingWaitingIndicator)")
+
+        // ⭐️ 核心逻辑：只有当 TypewriterEngine 空闲且超过延迟时间未收到数据时才显示
+        if isEngineIdle && timeSinceLastData > waitingIndicatorDelay {
+            if !isShowingWaitingIndicator {
+                print("[WaitingIndicator] ✅ 条件满足，显示等待动画")
+                showWaitingIndicator()
+            }
+        } else {
+            if isShowingWaitingIndicator {
+                hideWaitingIndicator()
+            }
+        }
+    }
+
+    /// ⭐️ 标记收到新数据（在 appendStreamData/appendBlock 时调用）
+    private func markDataReceived() {
+        lastDataReceivedTime = CFAbsoluteTimeGetCurrent()
+        // 收到数据时立即隐藏等待动画
+        if isShowingWaitingIndicator {
+            hideWaitingIndicator()
+        }
+    }
+
+    /// 更新等待动画显示状态（保留用于兼容）
     private func updateWaitingIndicator(visible: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -4735,9 +4798,11 @@ public final class MarkdownViewTextKit: UIView {
         if useSmartBuffer {
             streamBuffer.reset()
             streamBuffer.updateContainerWidth(bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32)
-            // 显示初始等待动画
-            updateWaitingIndicator(visible: true)
         }
+
+        // ⭐️ 修复：启动等待检测，而不是直接显示等待动画
+        // 等待动画只在 TypewriterEngine 空闲且一段时间无数据到达时显示
+        startWaitingDetection()
 
         // 记录开始时间
         streamingStartTimestamp = CFAbsoluteTimeGetCurrent()
@@ -4753,6 +4818,9 @@ public final class MarkdownViewTextKit: UIView {
             print("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
             return
         }
+
+        // ⭐️ 标记收到新数据，用于等待动画检测
+        markDataReceived()
 
         print("📥 [SmartBuffer] Received data: \(data.count) chars")
 
@@ -4854,6 +4922,9 @@ public final class MarkdownViewTextKit: UIView {
             return
         }
 
+        // ⭐️ 标记收到新数据，用于等待动画检测
+        markDataReceived()
+
         print("📝 [RealStream] Appending block: \(block.prefix(50))... (\(block.count) chars)")
 
         // 累积文本
@@ -4939,6 +5010,12 @@ public final class MarkdownViewTextKit: UIView {
     /// 显示真流式新增的元素
     private func displayRealStreamElements(_ elements: [MarkdownRenderElement], startIndex: Int) {
         let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+
+        // ⭐️ 有新内容显示时，先隐藏等待动画（如果有的话）
+        // 新逻辑：等待动画只在 TypewriterEngine 空闲且无数据到达时显示
+        if isShowingWaitingIndicator {
+            hideWaitingIndicator()
+        }
 
         for (index, element) in elements.enumerated() {
             let globalIndex = startIndex + index
@@ -5069,6 +5146,12 @@ public final class MarkdownViewTextKit: UIView {
 
         print("🎉 [RealStream] Ending real streaming mode")
 
+        // ⭐️ 停止等待检测定时器
+        stopWaitingDetection()
+
+        // ⭐️ 隐藏等待动画
+        hideWaitingIndicator()
+
         // ⭐️ 智能缓存模式：处理剩余的未完成内容
         if useSmartBufferMode {
             let remainingText = streamBuffer.flush()
@@ -5093,9 +5176,6 @@ public final class MarkdownViewTextKit: UIView {
                     displayRealStreamElements(elements, startIndex: previousCount)
                 }
             }
-
-            // 隐藏等待动画
-            hideWaitingIndicator()
         }
 
         // 更新 markdown 属性（用于后续非流式访问）

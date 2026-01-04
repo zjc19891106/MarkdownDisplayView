@@ -497,6 +497,36 @@ scrollableMarkdownView.backToTableOfContentsSection()
     }
 ```
 
+### 真流式渲染（LLM/网络 API）- 1.5.0 新增
+
+适用于 LLM API（如 ChatGPT、Claude）等内容分块到达的实时流式场景：
+
+```Swift
+class ChatViewController: UIViewController {
+    private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
+
+    // 开启真流式模式
+    func startLLMStream() {
+        scrollableMarkdownView.markdownView.startRealStreaming()
+    }
+
+    // API 返回数据块时追加内容
+    func onChunkReceived(_ chunk: String) {
+        scrollableMarkdownView.markdownView.appendStreamContent(chunk)
+    }
+
+    // 流式结束时调用
+    func onStreamComplete() {
+        scrollableMarkdownView.markdownView.finishStreaming()
+    }
+}
+```
+
+**核心特性**：
+- **智能缓冲**：自动缓冲未完成的 Markdown 结构（未闭合的代码块、表格、LaTeX 公式）
+- **增量渲染**：完整模块立即渲染，未完成内容继续缓冲等待
+- **打字机效果**：渲染内容平滑的逐字显示动画
+
 ## 🔌 自定义扩展
 
 MarkdownDisplayKit 支持自定义扩展，可以添加自己的 Markdown 语法和渲染。
@@ -694,6 +724,16 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 📝 更新日志
+
+### 1.5.0 (2026-01-04)
+
+- 🚀 **真流式渲染支持** - 新增 `MarkdownStreamBuffer` 智能流式缓冲器，支持网络/LLM API 实时流式渲染
+  - 智能模块检测：自动识别完整的 Markdown 块（标题、代码块、表格、LaTeX 公式）
+  - 未闭合结构处理：等待闭合标签后再渲染（如未闭合的 ``` 或 $$）
+  - 增量渲染：完整模块立即渲染，未完成内容继续缓冲
+- 💫 **智能等待动画** - 真流式模式下，当 TypewriterEngine 队列为空且网络数据未到达时，自动显示等待动画
+- 🏗️ **代码重构** - 将 `MarkdownTextViewTK2`、`MarkdownStreamBuffer` 和 `TypewriterEngine` 提取到独立文件，提升代码可维护性
+- 🐛 **流式修复** - 多项真流式模式稳定性和渲染问题修复
 
 ### 1.4.1 (2026-01-02)
 

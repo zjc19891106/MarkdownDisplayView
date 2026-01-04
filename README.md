@@ -479,6 +479,36 @@ scrollableMarkdownView.backToTableOfContentsSection()
     }
 ```
 
+### Real-Time Streaming (LLM/Network APIs) - New in 1.5.0
+
+For real-time streaming from LLM APIs (like ChatGPT, Claude) where content arrives in chunks:
+
+```Swift
+class ChatViewController: UIViewController {
+    private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
+
+    // Start real streaming mode
+    func startLLMStream() {
+        scrollableMarkdownView.markdownView.startRealStreaming()
+    }
+
+    // Append chunks as they arrive from the API
+    func onChunkReceived(_ chunk: String) {
+        scrollableMarkdownView.markdownView.appendStreamContent(chunk)
+    }
+
+    // Call when stream completes
+    func onStreamComplete() {
+        scrollableMarkdownView.markdownView.finishStreaming()
+    }
+}
+```
+
+**Key Features**:
+- **Smart Buffering**: Automatically buffers incomplete Markdown structures (unclosed code blocks, tables, LaTeX)
+- **Incremental Rendering**: Renders complete modules immediately while buffering incomplete content
+- **Typewriter Effect**: Smooth character-by-character animation for rendered content
+
 ## 🔌 Custom Extensions
 
 MarkdownDisplayKit supports custom extensions to add your own Markdown syntax and rendering.
@@ -676,6 +706,16 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## 📝 Changelog
+
+### 1.5.0 (2026-01-04)
+
+- 🚀 **Real Streaming Support** - New `MarkdownStreamBuffer` for intelligent real-time streaming from network/LLM APIs
+  - Smart module detection: automatically detects complete Markdown blocks (headings, code blocks, tables, LaTeX)
+  - Handles incomplete structures: waits for closing tags before rendering (e.g., unclosed ``` or $$)
+  - Incremental rendering: renders complete modules immediately while buffering incomplete content
+- 💫 **Smart Waiting Indicator** - In real streaming mode, automatically shows waiting animation when TypewriterEngine queue is empty and no network data arrives
+- 🏗️ **Code Refactoring** - Extracted `MarkdownTextViewTK2`, `MarkdownStreamBuffer`, and `TypewriterEngine` into separate files for better maintainability
+- 🐛 **Streaming Fixes** - Multiple fixes for real streaming mode stability and rendering issues
 
 ### 1.4.1 (2026-01-02)
 

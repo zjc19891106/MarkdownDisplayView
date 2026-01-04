@@ -858,10 +858,18 @@ class TableViewStreamingViewController: UIViewController {
         }
     }
 
+    /// ⭐️ 是否已经触发过网络卡顿模拟
+    private var hasSimulatedNetworkStall: Bool = false
+
     /// 启动智能流式定时器（模拟逐字符/逐块网络数据到达）
     private func startSmartStreamTimer() {
         print("[SmartStream] ⏰ Starting smart stream timer, fullText.count=\(smartStreamFullText.count)")
+        hasSimulatedNetworkStall = false  // 重置标记
+        startActualSmartStreamTimer()
+    }
 
+    /// 实际的智能流式定时器
+    private func startActualSmartStreamTimer() {
         // ⭐️ 关键区别：不预分割，而是模拟随机大小的数据块到达
         // 这样可以真正测试 SmartBuffer 的模块检测能力
         smartStreamTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
@@ -874,6 +882,24 @@ class TableViewStreamingViewController: UIViewController {
             let currentIndex = self.smartStreamCharIndex
 
             if currentIndex < fullText.count {
+                // ⭐️ 模拟网络卡顿：当进度到达 10% 时，暂停 4 秒（只触发一次）
+                // 10% 时队列任务较少，4 秒足够消耗完，能看到等待动画
+                let progress = Double(currentIndex) / Double(fullText.count)
+                if !self.hasSimulatedNetworkStall && progress >= 0.1 {
+                    self.hasSimulatedNetworkStall = true  // 标记已触发
+                    print("[SmartStream] ⏳ Simulating 4s network stall at 10% progress...")
+                    timer.invalidate()
+                    self.smartStreamTimer = nil
+
+                    // 4 秒后恢复
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+                        guard let self = self else { return }
+                        print("[SmartStream] ⏳ Network recovered, resuming...")
+                        self.startActualSmartStreamTimer()
+                    }
+                    return
+                }
+
                 // 随机发送 10-50 个字符，模拟网络数据包大小不一
                 let chunkSize = Int.random(in: 10...50)
                 let endIndex = min(currentIndex + chunkSize, fullText.count)
@@ -885,7 +911,7 @@ class TableViewStreamingViewController: UIViewController {
                 // ⭐️ 使用 appendStreamData 而不是 appendBlock
                 // 让 SmartBuffer 自动检测完整模块
                 self.realStreamCell?.appendStreamData(chunk)
-                print("📤 [SmartStream] Sent chunk: \(chunk.count) chars, progress: \(endIndex)/\(fullText.count)")
+                print("📤 [SmartStream] Sent chunk: \(chunk.count) chars, progress: \(Int(progress * 100))%")
 
                 self.smartStreamCharIndex = endIndex
             } else {
