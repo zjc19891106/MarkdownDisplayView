@@ -380,7 +380,11 @@ class ChatMarkdownCell: UITableViewCell {
     private var realStreamCompletion: (() -> Void)?
 
     /// 开始真流式模式
-    func beginRealStreaming(onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
+    /// - Parameters:
+    ///   - useSmartBuffer: 是否使用智能缓存模式（自动检测完整模块）
+    ///   - onStart: 开始回调
+    ///   - completion: 完成回调
+    func beginRealStreaming(useSmartBuffer: Bool = false, onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
         // 重置状态
         isPaused = false
         isCurrentlyStreaming = true
@@ -389,7 +393,7 @@ class ChatMarkdownCell: UITableViewCell {
         // ⚠️ 注意：不在 onComplete 中设置 isCurrentlyStreaming = false
         // 因为 endRealStreaming 调用时 TypewriterEngine 可能还在显示内容
         // 我们在 endRealStreaming 中手动处理完成逻辑
-        markdownView.beginRealStreaming(autoScrollBottom: false, onComplete: nil)
+        markdownView.beginRealStreaming(autoScrollBottom: false, useSmartBuffer: useSmartBuffer, onComplete: nil)
 
         // 立即执行 UI 切换
         typingIndicator.isHidden = true
@@ -402,9 +406,15 @@ class ChatMarkdownCell: UITableViewCell {
         onStart?()
     }
 
-    /// 追加一个 Markdown 块
+    /// 追加一个 Markdown 块（预分割模式）
     func appendBlock(_ block: String) {
         markdownView.appendBlock(block)
+    }
+
+    /// ⭐️ 追加流式数据（智能缓存模式）
+    /// 让 MarkdownStreamBuffer 自动检测完整模块
+    func appendStreamData(_ data: String) {
+        markdownView.appendStreamData(data)
     }
 
     /// 结束真流式
@@ -543,7 +553,7 @@ class TableViewStreamingViewController: UIViewController {
         view.addSubview(button)
         button.translatesAutoresizingMaskIntoConstraints = false
 
-        // 真流式按钮
+        // 真流式按钮（传统模式：外部预分割）
         let realStreamButton = UIButton(type: .system)
         realStreamButton.setTitle("真流式", for: .normal)
         realStreamButton.backgroundColor = .systemGreen
@@ -554,16 +564,35 @@ class TableViewStreamingViewController: UIViewController {
         view.addSubview(realStreamButton)
         realStreamButton.translatesAutoresizingMaskIntoConstraints = false
 
+        // ⭐️ 新增：智能流式按钮（使用 SmartBuffer 自动检测模块）
+        let smartStreamButton = UIButton(type: .system)
+        smartStreamButton.setTitle("智能流式", for: .normal)
+        smartStreamButton.backgroundColor = .systemOrange
+        smartStreamButton.setTitleColor(.white, for: .normal)
+        smartStreamButton.layer.cornerRadius = 20
+        smartStreamButton.addTarget(self, action: #selector(handleSmartStreamSend), for: .touchUpInside)
+
+        view.addSubview(smartStreamButton)
+        smartStreamButton.translatesAutoresizingMaskIntoConstraints = false
+
         NSLayoutConstraint.activate([
+            // 假流式按钮 - 左侧
             button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            button.trailingAnchor.constraint(equalTo: view.centerXAnchor, constant: -10),
-            button.widthAnchor.constraint(equalToConstant: 100),
+            button.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            button.widthAnchor.constraint(equalToConstant: 80),
             button.heightAnchor.constraint(equalToConstant: 44),
 
+            // 真流式按钮 - 中间
             realStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            realStreamButton.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: 10),
-            realStreamButton.widthAnchor.constraint(equalToConstant: 100),
-            realStreamButton.heightAnchor.constraint(equalToConstant: 44)
+            realStreamButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            realStreamButton.widthAnchor.constraint(equalToConstant: 80),
+            realStreamButton.heightAnchor.constraint(equalToConstant: 44),
+
+            // 智能流式按钮 - 右侧
+            smartStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+            smartStreamButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            smartStreamButton.widthAnchor.constraint(equalToConstant: 80),
+            smartStreamButton.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
     
@@ -735,7 +764,139 @@ class TableViewStreamingViewController: UIViewController {
         print("[FOOTNOTE_DEBUG] ⛔️ stopRealStream called!")
         realStreamTimer?.invalidate()
         realStreamTimer = nil
+        smartStreamTimer?.invalidate()
+        smartStreamTimer = nil
         realStreamCell?.endRealStreaming()
+    }
+
+    // MARK: - ⭐️ 智能流式（SmartBuffer 模式）
+
+    /// 智能流式定时器
+    private var smartStreamTimer: Timer?
+    /// 智能流式当前字符索引
+    private var smartStreamCharIndex: Int = 0
+    /// 智能流式完整文本
+    private var smartStreamFullText: String = ""
+
+    /// 处理智能流式发送（模拟逐字符到达，测试 SmartBuffer）
+    @objc private func handleSmartStreamSend() {
+        guard !isSending else { return }
+        isSending = true
+
+        let userText = "请用智能流式给我写一段 Markdown。"
+        let aiResponseText = demoMarkdown
+
+        // 1. 用户消息
+        let userMsg = ChatMessage(content: userText, isUser: true)
+        messages.append(userMsg)
+        insertRowAndScroll(animated: true)
+
+        // 2. 插入 Bot Loading
+        let botMsg = ChatMessage(content: "", isUser: false, isStreaming: false, isLoading: true)
+        messages.append(botMsg)
+        let botIndexPath = IndexPath(row: messages.count - 1, section: 0)
+        tableView.insertRows(at: [botIndexPath], with: .bottom)
+        scrollToBottom(animated: true)
+
+        // 3. 模拟网络延迟后开始智能流式
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+
+            // 初始化智能流式状态
+            self.smartStreamFullText = aiResponseText
+            self.smartStreamCharIndex = 0
+            self.realStreamIndexPath = botIndexPath
+
+            // 更新数据源状态
+            self.messages[botIndexPath.row].isLoading = false
+            self.messages[botIndexPath.row].isStreaming = true
+            self.messages[botIndexPath.row].content = ""
+
+            // 获取 Cell
+            if let cell = self.tableView.cellForRow(at: botIndexPath) as? ChatMarkdownCell {
+                self.realStreamCell = cell
+
+                // 绑定高度回调
+                cell.onContentHeightChanged = { [weak self] in
+                    guard let self = self else { return }
+                    UIView.performWithoutAnimation {
+                        self.tableView.performBatchUpdates(nil, completion: nil)
+                    }
+                    if let indexPath = self.realStreamIndexPath,
+                       indexPath.row < self.messages.count,
+                       self.messages[indexPath.row].isStreaming {
+                        self.scrollToBottom(animated: false)
+                    }
+                }
+
+                // ⭐️ 关键：使用 useSmartBuffer: true 开启智能缓存模式
+                cell.beginRealStreaming(
+                    useSmartBuffer: true,
+                    onStart: { [weak self] in
+                        self?.messages[botIndexPath.row].isLoading = false
+                        self?.messages[botIndexPath.row].isStreaming = true
+                        self?.isSending = false
+                    },
+                    completion: { [weak self] in
+                        guard let self = self else { return }
+                        self.messages[botIndexPath.row].content = aiResponseText
+                        self.messages[botIndexPath.row].isStreaming = false
+                        self.isSending = true
+                        print("✅ [SmartStream] Streaming completed!")
+                    }
+                )
+
+                // 启动定时器，模拟网络数据逐字符到达
+                self.startSmartStreamTimer()
+            } else {
+                // Cell 不可见，直接显示最终结果
+                self.messages[botIndexPath.row].content = aiResponseText
+                self.messages[botIndexPath.row].isStreaming = false
+                self.isSending = true
+                self.tableView.reloadRows(at: [botIndexPath], with: .none)
+            }
+        }
+    }
+
+    /// 启动智能流式定时器（模拟逐字符/逐块网络数据到达）
+    private func startSmartStreamTimer() {
+        print("[SmartStream] ⏰ Starting smart stream timer, fullText.count=\(smartStreamFullText.count)")
+
+        // ⭐️ 关键区别：不预分割，而是模拟随机大小的数据块到达
+        // 这样可以真正测试 SmartBuffer 的模块检测能力
+        smartStreamTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+
+            let fullText = self.smartStreamFullText
+            let currentIndex = self.smartStreamCharIndex
+
+            if currentIndex < fullText.count {
+                // 随机发送 10-50 个字符，模拟网络数据包大小不一
+                let chunkSize = Int.random(in: 10...50)
+                let endIndex = min(currentIndex + chunkSize, fullText.count)
+
+                let startIdx = fullText.index(fullText.startIndex, offsetBy: currentIndex)
+                let endIdx = fullText.index(fullText.startIndex, offsetBy: endIndex)
+                let chunk = String(fullText[startIdx..<endIdx])
+
+                // ⭐️ 使用 appendStreamData 而不是 appendBlock
+                // 让 SmartBuffer 自动检测完整模块
+                self.realStreamCell?.appendStreamData(chunk)
+                print("📤 [SmartStream] Sent chunk: \(chunk.count) chars, progress: \(endIndex)/\(fullText.count)")
+
+                self.smartStreamCharIndex = endIndex
+            } else {
+                // 所有数据发送完毕
+                print("[SmartStream] ⏰ Timer ending, calling endRealStreaming")
+                timer.invalidate()
+                self.smartStreamTimer = nil
+                self.realStreamCell?.endRealStreaming()
+                print("🏁 [SmartStream] All data sent, ending stream")
+            }
+        }
     }
 
     @objc private func handleSend() {

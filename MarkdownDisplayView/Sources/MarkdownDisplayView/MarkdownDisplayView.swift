@@ -440,6 +440,355 @@ extension MarkdownTextViewTK2 {
 }
 
 
+// MARK: - Stream Buffer
+
+/// 智能流式缓存器，用于真流式场景下的模块检测和渲染控制
+/// 负责缓存网络到达的字节流，检测完整的 Markdown 模块（标题+内容），
+/// 并在模块完整时通知外部进行渲染
+@available(iOS 15.0, *)
+final class MarkdownStreamBuffer {
+
+    // MARK: - 模块检测结果
+
+    /// 模块检测结果
+    struct ModuleDetectionResult {
+        /// 检测到的完整模块（可渲染的 Markdown 文本）
+        let completeModules: [String]
+        /// 剩余的未完成文本（需要继续缓存）
+        let pendingText: String
+        /// 是否有未完成的结构（代码块、表格等未闭合）
+        let hasPendingStructure: Bool
+        /// 未完成结构类型
+        let pendingType: PendingStructureType?
+    }
+
+    // MARK: - Properties
+
+    /// 累积的缓存文本
+    private(set) var accumulatedText: String = ""
+
+    /// 上次成功解析到的安全位置
+    private(set) var lastSafePosition: Int = 0
+
+    /// 已提交渲染的元素数量
+    private(set) var committedElementCount: Int = 0
+
+    /// 上次检测到的模块边界位置列表
+    private var moduleBoundaries: [Int] = []
+
+    /// 最小模块长度（防止过于频繁的模块检测）
+    private let minModuleLength: Int = 50
+
+    /// 配置
+    private let configuration: MarkdownConfiguration
+
+    /// 容器宽度
+    private var containerWidth: CGFloat
+
+    // MARK: - Callbacks
+
+    /// 当检测到完整模块时的回调
+    var onModuleReady: ((String, [MarkdownRenderElement]) -> Void)?
+
+    /// 当缓存状态变化时的回调（用于显示/隐藏等待动画）
+    var onBufferStateChanged: ((Bool) -> Void)?
+
+    // MARK: - Init
+
+    init(configuration: MarkdownConfiguration, containerWidth: CGFloat) {
+        self.configuration = configuration
+        self.containerWidth = containerWidth
+    }
+
+    // MARK: - Public Methods
+
+    /// 重置缓存状态
+    func reset() {
+        accumulatedText = ""
+        lastSafePosition = 0
+        committedElementCount = 0
+        moduleBoundaries = []
+        print("[StreamBuffer] 🔄 Buffer reset")
+    }
+
+    /// 更新容器宽度
+    func updateContainerWidth(_ width: CGFloat) {
+        self.containerWidth = width
+    }
+
+    /// 追加新到达的文本数据
+    /// - Parameter text: 新到达的文本片段
+    /// - Returns: 检测结果，包含可渲染的完整模块
+    func append(_ text: String) -> ModuleDetectionResult {
+        accumulatedText += text
+        print("[StreamBuffer] 📥 Appended \(text.count) chars, total: \(accumulatedText.count) chars")
+
+        return detectCompleteModules()
+    }
+
+    /// 强制提交所有剩余内容（流式结束时调用）
+    /// - Returns: 剩余的所有文本
+    func flush() -> String {
+        let remaining = String(accumulatedText.dropFirst(lastSafePosition))
+        print("[StreamBuffer] 🚿 Flushing remaining: \(remaining.count) chars")
+        lastSafePosition = accumulatedText.count
+        return remaining
+    }
+
+    /// 获取完整的累积文本
+    func getFullText() -> String {
+        return accumulatedText
+    }
+
+    // MARK: - Module Detection
+
+    /// 检测完整的 Markdown 模块
+    private func detectCompleteModules() -> ModuleDetectionResult {
+        let textToAnalyze = accumulatedText
+        let startPosition = lastSafePosition
+
+        // 1. 检测未完成的结构（代码块、表格等）
+        let pendingInfo = detectPendingStructure(in: textToAnalyze)
+
+        // 2. 如果有未闭合的结构，需要等待
+        if let pending = pendingInfo {
+            print("[StreamBuffer] ⏳ Pending structure detected: \(pending.rawValue)")
+            // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
+            return ModuleDetectionResult(
+                completeModules: [],
+                pendingText: String(textToAnalyze.dropFirst(startPosition)),
+                hasPendingStructure: true,
+                pendingType: pending
+            )
+        }
+
+        // 3. 查找模块边界（基于标题行）
+        let boundaries = findModuleBoundaries(in: textToAnalyze, from: startPosition)
+
+        // 4. 如果没有新的完整模块，继续等待
+        if boundaries.isEmpty {
+            // 检查是否有足够的纯文本内容（无标题的情况）
+            let remainingText = String(textToAnalyze.dropFirst(startPosition))
+            if remainingText.count > minModuleLength * 3 && remainingText.hasSuffix("\n\n") {
+                // 有大量文本且以双换行结束，可以提交
+                let completeText = remainingText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !completeText.isEmpty {
+                    lastSafePosition = textToAnalyze.count
+                    print("[StreamBuffer] ✅ No heading found, but submitting text block: \(completeText.prefix(50))...")
+                    return ModuleDetectionResult(
+                        completeModules: [completeText],
+                        pendingText: "",
+                        hasPendingStructure: false,
+                        pendingType: nil
+                    )
+                }
+            }
+
+            // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
+            return ModuleDetectionResult(
+                completeModules: [],
+                pendingText: String(textToAnalyze.dropFirst(startPosition)),
+                hasPendingStructure: false,
+                pendingType: nil
+            )
+        }
+
+        // 5. 提取完整的模块
+        var completeModules: [String] = []
+        var lastBoundary = startPosition
+
+        for boundary in boundaries {
+            if boundary > lastBoundary {
+                let moduleText = extractModule(from: textToAnalyze, start: lastBoundary, end: boundary)
+                if !moduleText.isEmpty {
+                    completeModules.append(moduleText)
+                    print("[StreamBuffer] ✅ Complete module found: \(moduleText.prefix(50))... (\(moduleText.count) chars)")
+                }
+            }
+            lastBoundary = boundary
+        }
+
+        // 更新安全位置
+        lastSafePosition = lastBoundary
+        moduleBoundaries = boundaries
+
+        // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
+        // 当有内容渲染时，等待动画会被自然推开
+
+        let pendingText = String(textToAnalyze.dropFirst(lastSafePosition))
+        return ModuleDetectionResult(
+            completeModules: completeModules,
+            pendingText: pendingText,
+            hasPendingStructure: false,
+            pendingType: nil
+        )
+    }
+
+    /// 检测文本中是否有未完成的结构
+    private func detectPendingStructure(in text: String) -> PendingStructureType? {
+        let nsText = text as NSString
+
+        // ⭐️ 检测末尾是否有不完整的代码块标记（如 ` 或 ``）
+        // 这是数据流被随机分割导致的
+        let trimmedEnd = text.suffix(10)  // 检查末尾10个字符
+        if trimmedEnd.contains("`") {
+            // 检查是否是完整的 ``` 开头或结尾
+            let backtickSuffix = String(text.suffix(5))
+            // 如果末尾有1-2个反引号但不是3个，可能是被截断了
+            if backtickSuffix.hasSuffix("`") && !backtickSuffix.hasSuffix("```") {
+                let backtickCount = backtickSuffix.reversed().prefix(while: { $0 == "`" }).count
+                if backtickCount == 1 || backtickCount == 2 {
+                    print("[StreamBuffer] ⏳ Incomplete backtick detected at end: \(backtickCount) backticks")
+                    return .codeBlock
+                }
+            }
+        }
+
+        // 1. 检测未闭合的代码块 ```
+        let codeBlockPattern = "```"
+        var codeBlockCount = 0
+        var searchRange = NSRange(location: 0, length: nsText.length)
+
+        while searchRange.location < nsText.length {
+            let foundRange = nsText.range(of: codeBlockPattern, options: [], range: searchRange)
+            if foundRange.location == NSNotFound { break }
+            codeBlockCount += 1
+            searchRange.location = foundRange.location + foundRange.length
+            searchRange.length = nsText.length - searchRange.location
+        }
+
+        if codeBlockCount % 2 != 0 {
+            return .codeBlock
+        }
+
+        // 2. 检测未闭合的 LaTeX 块 $$
+        let latexBlockPattern = "$$"
+        var latexBlockCount = 0
+        searchRange = NSRange(location: 0, length: nsText.length)
+
+        while searchRange.location < nsText.length {
+            let foundRange = nsText.range(of: latexBlockPattern, options: [], range: searchRange)
+            if foundRange.location == NSNotFound { break }
+            latexBlockCount += 1
+            searchRange.location = foundRange.location + foundRange.length
+            searchRange.length = nsText.length - searchRange.location
+        }
+
+        if latexBlockCount % 2 != 0 {
+            return .latexBlock
+        }
+
+        // 3. 检测未完成的表格（末尾以 | 开头但无空行结束）
+        let lines = text.components(separatedBy: .newlines)
+        if let lastNonEmptyLine = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+            if lastNonEmptyLine.trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                if lastNonEmptyLine.contains("|") && !text.hasSuffix("\n\n") {
+                    return .table
+                }
+            }
+        }
+
+        return nil
+    }
+
+    /// 查找模块边界（自适应策略）
+    /// ⭐️ 自适应分割策略：
+    /// 1. 如果有多个一级标题 → 按一级标题分割
+    /// 2. 如果只有一个/没有一级标题但有多个二级标题 → 按二级标题分割
+    /// 3. 如果都没有 → 按双换行分割段落
+    /// - Parameters:
+    ///   - text: 完整文本
+    ///   - from: 起始搜索位置
+    /// - Returns: 模块边界位置数组
+    private func findModuleBoundaries(in text: String, from startPosition: Int) -> [Int] {
+        let lines = text.components(separatedBy: "\n")
+        var currentPosition = 0
+
+        // 收集各级标题位置
+        var h1Positions: [Int] = []  // # 一级标题
+        var h2Positions: [Int] = []  // ## 二级标题
+
+        // 追踪代码块状态
+        var isInsideCodeBlock = false
+
+        for (index, line) in lines.enumerated() {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            // 检测代码块边界
+            if trimmedLine.hasPrefix("```") {
+                isInsideCodeBlock = !isInsideCodeBlock
+            }
+
+            if !isInsideCodeBlock && currentPosition >= startPosition {
+                // 一级标题：以 `# ` 开头但不是 `## `
+                if trimmedLine.hasPrefix("# ") && !trimmedLine.hasPrefix("## ") {
+                    h1Positions.append(currentPosition)
+                }
+                // 二级标题：以 `## ` 开头但不是 `### `
+                else if trimmedLine.hasPrefix("## ") && !trimmedLine.hasPrefix("### ") {
+                    h2Positions.append(currentPosition)
+                }
+            }
+
+            currentPosition += line.count + (index < lines.count - 1 ? 1 : 0)
+        }
+
+        // ⭐️ 自适应选择分割级别
+        var headingPositions: [Int]
+        var headingLevel: String
+
+        if h1Positions.count >= 2 {
+            // 策略1：有多个一级标题，按一级标题分割
+            headingPositions = h1Positions
+            headingLevel = "H1"
+        } else if h2Positions.count >= 2 {
+            // 策略2：只有一个/没有一级标题，但有多个二级标题，按二级标题分割
+            headingPositions = h2Positions
+            headingLevel = "H2"
+        } else {
+            // 策略3：没有足够的标题，按双换行分割
+            headingPositions = []
+            headingLevel = "paragraph"
+        }
+
+        print("[StreamBuffer] 📊 Strategy: \(headingLevel), H1=\(h1Positions.count), H2=\(h2Positions.count)")
+
+        // 计算边界
+        var boundaries: [Int] = []
+
+        if headingPositions.count >= 2 {
+            // 每个标题位置（除了第一个）都是前一个模块的边界
+            for i in 1..<headingPositions.count {
+                boundaries.append(headingPositions[i])
+            }
+
+            // 检查最后一个模块是否完整
+            let lastPos = headingPositions.last!
+            let contentAfterLast = text.count - lastPos
+            if contentAfterLast > minModuleLength && text.hasSuffix("\n\n") {
+                boundaries.append(text.count)
+            }
+        } else if text.count > startPosition + minModuleLength * 2 && text.hasSuffix("\n\n") {
+            // 没有足够标题，但有足够内容且以双换行结束
+            boundaries.append(text.count)
+        }
+
+        print("[StreamBuffer] 📊 Found \(boundaries.count) boundaries")
+        return boundaries
+    }
+
+    /// 提取模块文本
+    private func extractModule(from text: String, start: Int, end: Int) -> String {
+        guard start < end && end <= text.count else { return "" }
+
+        let startIndex = text.index(text.startIndex, offsetBy: start)
+        let endIndex = text.index(text.startIndex, offsetBy: end)
+
+        return String(text[startIndex..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+
 // MARK: - Typewriter Engine
 
 @available(iOS 15.0, *)
@@ -1040,6 +1389,63 @@ public final class MarkdownViewTextKit: UIView {
     // 流式渲染节流（避免过度渲染）
     private var lastStreamRenderTime: TimeInterval = 0
     private let streamRenderThrottle: TimeInterval = 0.3  // 300ms 节流（大幅降低CPU占用）
+
+    // MARK: - 智能流式缓存（真流式模式）
+
+    /// 流式缓存器实例
+    private lazy var streamBuffer: MarkdownStreamBuffer = {
+        let buffer = MarkdownStreamBuffer(
+            configuration: configuration,
+            containerWidth: bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+        )
+        // ⭐️ 移除回调绑定：等待动画现在只在流式开始/结束时控制
+        // 避免频繁的状态变化导致 UI 闪烁
+        return buffer
+    }()
+
+    /// 等待动画视图
+    private lazy var waitingIndicatorView: UIView = {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.accessibilityIdentifier = "StreamWaitingIndicator"
+
+        // 创建三点动画视图
+        let dotsStack = UIStackView()
+        dotsStack.axis = .horizontal
+        dotsStack.spacing = 6
+        dotsStack.distribution = .equalSpacing
+        dotsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        for i in 0..<3 {
+            let dot = UIView()
+            dot.backgroundColor = UIColor.systemGray3
+            dot.layer.cornerRadius = 4
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.tag = 100 + i
+            dotsStack.addArrangedSubview(dot)
+
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 8),
+                dot.heightAnchor.constraint(equalToConstant: 8)
+            ])
+        }
+
+        container.addSubview(dotsStack)
+        NSLayoutConstraint.activate([
+            dotsStack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            dotsStack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            container.heightAnchor.constraint(equalToConstant: 30)
+        ])
+
+        container.isHidden = true
+        return container
+    }()
+
+    /// 等待动画定时器
+    private var waitingAnimationTimer: Timer?
+
+    /// 是否正在显示等待动画
+    private var isShowingWaitingIndicator: Bool = false
 
     // MARK: - Initialization
 
@@ -5369,6 +5775,92 @@ public final class MarkdownViewTextKit: UIView {
         // 设置 markdown 会触发 scheduleRerender()，自动渲染包括脚注
     }
 
+    // MARK: - 等待动画控制
+
+    /// 更新等待动画显示状态
+    private func updateWaitingIndicator(visible: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            if visible && !self.isShowingWaitingIndicator {
+                self.showWaitingIndicator()
+            } else if !visible && self.isShowingWaitingIndicator {
+                self.hideWaitingIndicator()
+            }
+        }
+    }
+
+    /// 显示等待动画
+    private func showWaitingIndicator() {
+        guard !isShowingWaitingIndicator else { return }
+        isShowingWaitingIndicator = true
+
+        // 添加到 StackView 末尾
+        if waitingIndicatorView.superview == nil {
+            contentStackView.addArrangedSubview(waitingIndicatorView)
+        }
+        waitingIndicatorView.isHidden = false
+
+        // 启动跳动动画
+        startWaitingAnimation()
+
+        print("[StreamBuffer] 💫 Waiting indicator shown")
+    }
+
+    /// 隐藏等待动画
+    private func hideWaitingIndicator() {
+        guard isShowingWaitingIndicator else { return }
+        isShowingWaitingIndicator = false
+
+        // 停止动画
+        stopWaitingAnimation()
+
+        // 从 StackView 移除
+        waitingIndicatorView.isHidden = true
+        waitingIndicatorView.removeFromSuperview()
+
+        print("[StreamBuffer] 💫 Waiting indicator hidden")
+    }
+
+    /// 启动等待动画（三点跳动）
+    private func startWaitingAnimation() {
+        waitingAnimationTimer?.invalidate()
+
+        var animationStep = 0
+        waitingAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] timer in
+            guard let self = self, self.isShowingWaitingIndicator else {
+                timer.invalidate()
+                return
+            }
+
+            // 找到所有的点
+            for i in 0..<3 {
+                if let dot = self.waitingIndicatorView.viewWithTag(100 + i) {
+                    let isActive = (i == animationStep % 3)
+                    UIView.animate(withDuration: 0.15) {
+                        dot.transform = isActive ? CGAffineTransform(scaleX: 1.3, y: 1.3) : .identity
+                        dot.alpha = isActive ? 1.0 : 0.5
+                    }
+                }
+            }
+            animationStep += 1
+        }
+    }
+
+    /// 停止等待动画
+    private func stopWaitingAnimation() {
+        waitingAnimationTimer?.invalidate()
+        waitingAnimationTimer = nil
+
+        // 重置所有点的状态
+        for i in 0..<3 {
+            if let dot = waitingIndicatorView.viewWithTag(100 + i) {
+                dot.transform = .identity
+                dot.alpha = 1.0
+            }
+        }
+    }
+
     // MARK: - ⭐️ 真流式 Append 模式（Real Streaming）
 
     /// 真流式模式标记
@@ -5386,12 +5878,16 @@ public final class MarkdownViewTextKit: UIView {
     /// 真流式完成回调
     private var realStreamOnComplete: (() -> Void)?
 
+    /// 是否使用智能缓存模式（新 API）
+    private var useSmartBufferMode = false
+
     /// 开始真流式模式
     /// - Parameters:
     ///   - autoScrollBottom: 是否自动滚动到底部
+    ///   - useSmartBuffer: 是否使用智能缓存模式（自动检测完整模块）
     ///   - onComplete: 流式完成回调
-    public func beginRealStreaming(autoScrollBottom: Bool = true, onComplete: (() -> Void)? = nil) {
-        print("[FOOTNOTE_DEBUG] 🟢 beginRealStreaming called")
+    public func beginRealStreaming(autoScrollBottom: Bool = true, useSmartBuffer: Bool = false, onComplete: (() -> Void)? = nil) {
+        print("[FOOTNOTE_DEBUG] 🟢 beginRealStreaming called, useSmartBuffer=\(useSmartBuffer)")
 
         // 停止任何现有流式
         stopStreaming()
@@ -5399,6 +5895,7 @@ public final class MarkdownViewTextKit: UIView {
         // 初始化真流式状态
         isRealStreamingMode = true
         isStreaming = true
+        useSmartBufferMode = useSmartBuffer
         print("[FOOTNOTE_DEBUG] 🟢 isRealStreamingMode set to TRUE")
         autoScrollEnabled = autoScrollBottom
         realStreamAccumulatedText = ""
@@ -5416,18 +5913,105 @@ public final class MarkdownViewTextKit: UIView {
         // 重置 TypewriterEngine
         typewriterEngine.stop()
 
+        // 重置 StreamBuffer（智能缓存模式）
+        if useSmartBuffer {
+            streamBuffer.reset()
+            streamBuffer.updateContainerWidth(bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32)
+            // 显示初始等待动画
+            updateWaitingIndicator(visible: true)
+        }
+
         // 记录开始时间
         streamingStartTimestamp = CFAbsoluteTimeGetCurrent()
 
-        print("🎬 [RealStream] Started real streaming mode")
+        print("🎬 [RealStream] Started real streaming mode, smartBuffer=\(useSmartBuffer)")
     }
 
-    /// 追加一个完整的 Markdown 块
+    /// ⭐️ 新 API：追加流式数据（智能缓存模式）
+    /// 自动检测完整模块并渲染，无需外部预分割
+    /// - Parameter data: 网络到达的原始文本数据
+    public func appendStreamData(_ data: String) {
+        guard isRealStreamingMode else {
+            print("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
+            return
+        }
+
+        print("📥 [SmartBuffer] Received data: \(data.count) chars")
+
+        // 使用 StreamBuffer 检测完整模块
+        let result = streamBuffer.append(data)
+
+        // 处理检测到的完整模块
+        if !result.completeModules.isEmpty {
+            for moduleText in result.completeModules {
+                print("📦 [SmartBuffer] Processing complete module: \(moduleText.prefix(50))...")
+                parseAndRenderModule(moduleText)
+            }
+        }
+
+        // 如果有未完成的结构，日志记录
+        if result.hasPendingStructure, let pending = result.pendingType {
+            print("⏳ [SmartBuffer] Waiting for \(pending.rawValue) to close...")
+        }
+    }
+
+    /// 解析并渲染单个模块
+    private func parseAndRenderModule(_ moduleText: String) {
+        let previousElementCount = realStreamParsedElementCount
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, self.isRealStreamingMode else { return }
+
+            let parseStart = CFAbsoluteTimeGetCurrent()
+
+            // 预处理脚注
+            let (processedText, _) = self.preprocessFootnotes(moduleText)
+
+            // 解析 Markdown
+            let config = self.configuration
+            let containerWidth = UIScreen.main.bounds.width - 32
+            let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
+            let (elements, attachments, tocItems, tocId) = renderer.render(processedText)
+
+            let parseDuration = (CFAbsoluteTimeGetCurrent() - parseStart) * 1000
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.isRealStreamingMode else { return }
+
+                print("✅ [SmartBuffer] Parsed module: \(elements.count) elements, time: \(String(format: "%.1f", parseDuration))ms")
+
+                // 累积到完整文本（用于最终的 markdown 属性）
+                self.realStreamAccumulatedText += moduleText + "\n\n"
+
+                // 更新状态
+                let newCount = self.realStreamParsedElementCount + elements.count
+                self.realStreamParsedElementCount = newCount
+                self.imageAttachments.append(contentsOf: attachments)
+                self.tableOfContents.append(contentsOf: tocItems)
+                if let id = tocId {
+                    self.tocSectionId = id
+                }
+
+                // 显示元素
+                if !elements.isEmpty {
+                    self.displayRealStreamElements(elements, startIndex: previousElementCount)
+                }
+            }
+        }
+    }
+
+    /// 追加一个完整的 Markdown 块（保持向后兼容）
     /// - Parameter block: 完整的 Markdown 块（如标题+内容、段落、代码块等）
     /// - Note: 每个块应该是完整的 Markdown 结构，不会在语法中间截断
     public func appendBlock(_ block: String) {
         guard isRealStreamingMode else {
             print("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
+            return
+        }
+
+        // 如果使用智能缓存模式，委托给 appendStreamData
+        if useSmartBufferMode {
+            appendStreamData(block)
             return
         }
 
@@ -5646,6 +6230,35 @@ public final class MarkdownViewTextKit: UIView {
 
         print("🎉 [RealStream] Ending real streaming mode")
 
+        // ⭐️ 智能缓存模式：处理剩余的未完成内容
+        if useSmartBufferMode {
+            let remainingText = streamBuffer.flush()
+            if !remainingText.isEmpty {
+                print("📦 [SmartBuffer] Flushing remaining content: \(remainingText.prefix(50))...")
+                // 同步解析剩余内容
+                let (processedText, _) = preprocessFootnotes(remainingText)
+                let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+                let renderer = MarkdownRenderer(configuration: configuration, containerWidth: containerWidth)
+                let (elements, attachments, tocItems, tocId) = renderer.render(processedText)
+
+                // 累积到完整文本
+                realStreamAccumulatedText += remainingText
+
+                // 显示剩余元素
+                if !elements.isEmpty {
+                    let previousCount = realStreamParsedElementCount
+                    realStreamParsedElementCount += elements.count
+                    imageAttachments.append(contentsOf: attachments)
+                    tableOfContents.append(contentsOf: tocItems)
+                    if let id = tocId { tocSectionId = id }
+                    displayRealStreamElements(elements, startIndex: previousCount)
+                }
+            }
+
+            // 隐藏等待动画
+            hideWaitingIndicator()
+        }
+
         // 更新 markdown 属性（用于后续非流式访问）
         markdown = realStreamAccumulatedText
 
@@ -5678,6 +6291,7 @@ public final class MarkdownViewTextKit: UIView {
             // 2. 重置状态
             self.isRealStreamingMode = false
             self.isStreaming = false
+            self.useSmartBufferMode = false
             print("[FOOTNOTE_DEBUG] 🔴 isRealStreamingMode set to FALSE")
 
             // 3. 通知最终高度
