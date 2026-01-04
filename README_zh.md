@@ -785,8 +785,9 @@ MarkdownDisplayView 由 [@zjc19891106](https://github.com/zjc19891106) 创建和
 ## 🙏 致谢
 
 - [swift-markdown](https://github.com/swiftlang/swift-markdown) - Markdown 解析库
+- [KaTeX](https://github.com/KaTeX/KaTeX) - 数学公式渲染字体
 - Apple TextKit 2 - 高性能文本渲染框架
-- Gemini3 Pro&Claude&Grok&GPT 
+- Gemini3 Pro&Claude&Grok&GPT
 - 所有贡献者和使用者
 
 ## 📮 联系方式
