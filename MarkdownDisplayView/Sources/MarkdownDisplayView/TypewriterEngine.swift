@@ -413,8 +413,10 @@ class TypewriterEngine {
 
     private func calculateDelay(at index: Int, text: String) -> TimeInterval {
         var delay = baseDuration
-        if index < text.count {
-            let charIndex = text.index(text.startIndex, offsetBy: index)
+        // 使用 limitedBy 安全获取索引，防止 Unicode 字符边界导致崩溃
+        if index >= 0,
+           index < text.count,
+           let charIndex = text.index(text.startIndex, offsetBy: index, limitedBy: text.endIndex) {
             let char = text[charIndex]
             if "，,、".contains(char) { delay += 0.03 }
             else if "。！？!?;；\n".contains(char) { delay += 0.08 }

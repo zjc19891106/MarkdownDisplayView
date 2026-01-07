@@ -363,10 +363,14 @@ final class MarkdownStreamBuffer {
 
     /// 提取模块文本
     private func extractModule(from text: String, start: Int, end: Int) -> String {
-        guard start < end && end <= text.count else { return "" }
+        guard start >= 0, start < end, end <= text.count else { return "" }
 
-        let startIndex = text.index(text.startIndex, offsetBy: start)
-        let endIndex = text.index(text.startIndex, offsetBy: end)
+        // 使用 limitedBy 安全获取索引，防止 Unicode 字符边界导致崩溃
+        guard let startIndex = text.index(text.startIndex, offsetBy: start, limitedBy: text.endIndex),
+              let endIndex = text.index(text.startIndex, offsetBy: end, limitedBy: text.endIndex),
+              startIndex < endIndex else {
+            return ""
+        }
 
         return String(text[startIndex..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
     }

@@ -97,7 +97,7 @@ public final class MarkdownViewTextKit: UIView {
     private var firstLatexShown: Bool = false  // ⭐️ 是否已显示第一个公式
     private var streamFullText: String = ""
     private var streamCurrentIndex: Int = 0
-    private var isStreaming = false  // ✅ 默认非流式模式 
+    private var isStreaming = false  // ✅ 默认非流式模式
 
     private var streamTokens: [String] = []
     private var streamTokenIndex: Int = 0
