@@ -707,6 +707,12 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## 📝 Changelog
 
+### 1.5.1 (2026-01-07)
+
+- 🐛 **Bug Fix** - Fixed potential crash when processing Unicode characters (emoji, CJK characters) in streaming mode
+  - `MarkdownStreamBuffer.extractModule`: Use safe string index with `limitedBy` to prevent out-of-bounds crash
+  - `TypewriterEngine.calculateDelay`: Use safe string index to prevent crash when calculating delay for special characters
+
 ### 1.5.0 (2026-01-04)
 
 - 🚀 **Real Streaming Support** - New `MarkdownStreamBuffer` for intelligent real-time streaming from network/LLM APIs
