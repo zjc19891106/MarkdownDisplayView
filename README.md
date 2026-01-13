@@ -2,7 +2,7 @@
 
 # MarkdownDisplayView
 
-A powerful iOS Markdown rendering component built on TextKit 2, providing smooth rendering performance and rich customization options. It also supports streaming rendering of Markdown content.
+A powerful iOS Markdown rendering component built on TextKit 2, providing smooth rendering performance and rich customization options. It also enables the streaming rendering of Markdown format in AI question-and-answer scenarios.
 
 ## Demo Effects
 
