@@ -707,6 +707,12 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## 📝 Changelog
 
+### 1.5.2 (2026-01-08)
+
+- 🐛 **Crash Fix** - Serialize `swift-markdown` parsing to avoid `cmark_parser_attach_syntax_extension` race crash in concurrent renders
+- 🧹 **Reuse Safety** - Add `resetForReuse()` to clear internal caches/state for `UITableViewCell` reuse scenarios
+- 🧪 **Example Update** - Add crash reproduction screen and incremental row insert demo for table view usage
+
 ### 1.5.1 (2026-01-07)
 
 - 🐛 **Bug Fix** - Fixed potential crash when processing Unicode characters (emoji, CJK characters) in streaming mode
