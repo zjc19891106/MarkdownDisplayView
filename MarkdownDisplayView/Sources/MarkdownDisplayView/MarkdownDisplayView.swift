@@ -4602,6 +4602,55 @@ public final class MarkdownViewTextKit: UIView {
         // 设置 markdown 会触发 scheduleRerender()，自动渲染包括脚注
     }
 
+    /// 用于可复用场景（如 UITableViewCell）强制清理解析与视图缓存
+    public func resetForReuse() {
+        renderWorkItem?.cancel()
+        offscreenRenderWorkItem?.cancel()
+        streamTimer?.invalidate()
+        streamTimer = nil
+        waitingDetectionTimer?.invalidate()
+        waitingAnimationTimer?.invalidate()
+
+        renderVersionLock.lock()
+        renderVersion += 1
+        renderVersionLock.unlock()
+
+        isStreaming = false
+        isRealStreamingMode = false
+        streamPreParseCompleted = false
+        streamDisplayedCount = 0
+        streamParsedElements = []
+        streamParsedFootnotes = []
+        streamParsedAttachments = []
+        streamTotalTextLength = 0
+        streamFullText = ""
+        streamCurrentIndex = 0
+        streamTokens = []
+        streamTokenIndex = 0
+        pendingFootnoteRender = false
+        currentFootnotes = []
+        cachedFootnoteView?.removeFromSuperview()
+        cachedFootnoteView = nil
+
+        parseCache = ParseCache()
+        cachedContainerWidth = 0
+        configurationHash = 0
+        oldElements = []
+        headingViews.removeAll()
+        tocSectionView = nil
+        tocSectionId = nil
+        tableOfContents = []
+        imageAttachments = []
+
+        typewriterEngine.stop()
+        clearViewCache()
+        streamBuffer.reset()
+        contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        setNeedsLayout()
+        layoutIfNeeded()
+    }
+
     // MARK: - 等待动画控制
 
     /// ⭐️ 启动等待检测（在真流式开始时调用）

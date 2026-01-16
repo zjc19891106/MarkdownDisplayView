@@ -41,6 +41,8 @@ final class MarkdownParser: MarkdownParserProtocol {
 
     private let configuration: MarkdownConfiguration
     private let containerWidth: CGFloat
+    // 解析锁：避免 swift-cmark 在多线程并发时挂载语法扩展导致崩溃
+    private static let parseLock = NSLock()
 
     private var listDepth = 0
     private var quoteDepth = 0  // 引用块嵌套深度
@@ -119,7 +121,7 @@ final class MarkdownParser: MarkdownParserProtocol {
         let textToparse = nsText.substring(with: parseRange)
 
         // 5. 执行解析
-        let document = Document(parsing: textToparse)
+        let document = parseDocument(textToparse)
         let (parsedElements, attachments) = render(document)
         let (tocItems, _) = extractHeadings(from: document)
 
@@ -357,7 +359,7 @@ final class MarkdownParser: MarkdownParserProtocol {
         tocSectionId: String?
     ) {
         
-        let document = Document(parsing: markdown)
+        let document = parseDocument(markdown)
         
         // 提取 TOC 和自动目录区域 ID
         let (tocItems, tocId) = extractHeadings(from: document)
@@ -366,6 +368,12 @@ final class MarkdownParser: MarkdownParserProtocol {
         let (elements, attachments) = render(document)
         
         return (elements, attachments, tocItems, tocId)
+    }
+
+    private func parseDocument(_ markdown: String) -> Document {
+        Self.parseLock.lock()
+        defer { Self.parseLock.unlock() }
+        return Document(parsing: markdown)
     }
     
     private func render(_ document: Document) -> (

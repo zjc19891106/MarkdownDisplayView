@@ -28,6 +28,15 @@ class ViewController: UIViewController {
         return button
     }()
 
+    private lazy var crashReproButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setTitle("TableView Crash Repro", for: .normal)
+        button.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
+        button.addTarget(self, action: #selector(openCrashReproDemo), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
     override func viewDidLoad() {
         super.viewDidLoad()
         DispatchQueue.global().async {
@@ -40,6 +49,7 @@ class ViewController: UIViewController {
         view.addSubview(titleLabel)
         view.addSubview(syncButton)
         view.addSubview(tableViewButton)
+        view.addSubview(crashReproButton)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
@@ -49,7 +59,10 @@ class ViewController: UIViewController {
             syncButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -60),
 
             tableViewButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            tableViewButton.topAnchor.constraint(equalTo: syncButton.bottomAnchor, constant: 20)
+            tableViewButton.topAnchor.constraint(equalTo: syncButton.bottomAnchor, constant: 20),
+
+            crashReproButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            crashReproButton.topAnchor.constraint(equalTo: tableViewButton.bottomAnchor, constant: 20)
 
         ])
     }
@@ -66,5 +79,10 @@ class ViewController: UIViewController {
         self.present(vc, animated: true, completion: nil)
     }
 
-}
+    @objc private func openCrashReproDemo() {
+        let vc = CrashReproViewController()
+        vc.modalPresentationStyle = .fullScreen
+        self.present(vc, animated: true, completion: nil)
+    }
 
+}
