@@ -117,24 +117,43 @@ public final class MermaidRenderer: MarkdownCodeBlockRenderer {
 // MARK: - Mermaid WebView
 
 /// Mermaid 渲染视图
-final class MermaidWebView: UIView, WKNavigationDelegate {
+final class MermaidWebView: UIView, WKNavigationDelegate, WKScriptMessageHandler {
 
-    private let webView: WKWebView
+    private var webView: WKWebView!
     private let code: String
-    private let preferredSize: CGSize
+
+    private var heightConstraint: NSLayoutConstraint?
+    private var lastReportedHeight: CGFloat = 0
+    private var maxHeightForToken: CGFloat = 0
+    private var renderToken = UUID()
 
     init(code: String, frame: CGRect) {
         self.code = code
-        self.preferredSize = frame.size
+        super.init(frame: frame)
+
+        let contentController = WKUserContentController()
+        contentController.add(self, name: "mermaidHeight")
+
+        let script = WKUserScript(
+            source: Self.heightObserverScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+        contentController.addUserScript(script)
 
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptEnabled = true
-        self.webView = WKWebView(frame: .zero, configuration: config)
+        config.userContentController = contentController
 
-        super.init(frame: frame)
+        webView = WKWebView(frame: .zero, configuration: config)
+
         translatesAutoresizingMaskIntoConstraints = false
-        setupUI()
+        setupUI(initialHeight: frame.size.height)
         loadMermaid()
+    }
+
+    deinit {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "mermaidHeight")
     }
 
     required init?(coder: NSCoder) {
@@ -142,10 +161,10 @@ final class MermaidWebView: UIView, WKNavigationDelegate {
     }
 
     override var intrinsicContentSize: CGSize {
-        return preferredSize
+        CGSize(width: UIView.noIntrinsicMetric, height: heightConstraint?.constant ?? 0)
     }
 
-    private func setupUI() {
+    private func setupUI(initialHeight: CGFloat) {
         backgroundColor = .systemBackground
         layer.cornerRadius = 8
         clipsToBounds = true
@@ -157,8 +176,10 @@ final class MermaidWebView: UIView, WKNavigationDelegate {
         webView.backgroundColor = .clear
         addSubview(webView)
 
-        // 高度约束
-        heightAnchor.constraint(equalToConstant: preferredSize.height).isActive = true
+        let constraint = heightAnchor.constraint(equalToConstant: max(1, initialHeight))
+        constraint.priority = .required
+        constraint.isActive = true
+        heightConstraint = constraint
 
         NSLayoutConstraint.activate([
             webView.topAnchor.constraint(equalTo: topAnchor),
@@ -169,8 +190,52 @@ final class MermaidWebView: UIView, WKNavigationDelegate {
     }
 
     private func loadMermaid() {
+        renderToken = UUID()
+        maxHeightForToken = 0
         let html = generateMermaidHTML(code: code)
         webView.loadHTMLString(html, baseURL: nil)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let token = renderToken
+        requestHeightPoll(token: token, attempt: 0)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "mermaidHeight" else { return }
+        guard let height = message.body as? Double else { return }
+        applyHeight(CGFloat(height))
+    }
+
+    private func requestHeightPoll(token: UUID, attempt: Int) {
+        guard token == renderToken else { return }
+        let script = "window.__mdv_getHeight ? window.__mdv_getHeight() : 0"
+        webView.evaluateJavaScript(script) { [weak self] result, _ in
+            guard let self else { return }
+            applyHeight(CGFloat((result as? Double) ?? 0))
+
+            if attempt < 6 {
+                let delay = 0.08 + Double(attempt) * 0.12
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.requestHeightPoll(token: token, attempt: attempt + 1)
+                }
+            }
+        }
+    }
+
+    private func applyHeight(_ height: CGFloat) {
+        let adjustedHeight = max(1, ceil(height) + 16)
+        if adjustedHeight <= maxHeightForToken + 1 {
+            return
+        }
+        maxHeightForToken = adjustedHeight
+
+        guard abs(adjustedHeight - lastReportedHeight) > 1 else { return }
+        lastReportedHeight = adjustedHeight
+        heightConstraint?.constant = adjustedHeight
+        invalidateIntrinsicContentSize()
+        setNeedsLayout()
+        layoutIfNeeded()
     }
 
     private func generateMermaidHTML(code: String) -> String {
@@ -188,28 +253,31 @@ final class MermaidWebView: UIView, WKNavigationDelegate {
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
             <style>
-                body {
+                html, body {
                     margin: 0;
-                    padding: 8px;
-                    display: flex;
-                    justify-content: center;
-                    align-items: flex-start;
-                    box-sizing: border-box;
+                    padding: 0;
                     background-color: transparent;
+                    overflow: hidden;
+                }
+                body {
+                    padding: 8px;
+                    box-sizing: border-box;
+                    text-align: center;
                 }
                 .mermaid {
                     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+                    display: inline-block;
                 }
-                /* 深色模式支持 */
+                svg {
+                    display: block;
+                }
                 @media (prefers-color-scheme: dark) {
                     body { background-color: transparent; }
                 }
             </style>
         </head>
         <body>
-            <div class="mermaid">
-            \(escapedCode)
-            </div>
+            <div class="mermaid">\(escapedCode)</div>
             <script>
                 mermaid.initialize({
                     startOnLoad: true,
@@ -221,7 +289,57 @@ final class MermaidWebView: UIView, WKNavigationDelegate {
         </html>
         """
     }
+
+    private static let heightObserverScript = """
+    (function() {
+      function calcHeight() {
+        try {
+          var svg = document.querySelector('svg');
+          if (svg) {
+            var r = svg.getBoundingClientRect();
+            if (r && r.height) {
+              return r.bottom;
+            }
+          }
+
+          var docEl = document.documentElement;
+          var body = document.body;
+          var h1 = Math.max(docEl ? docEl.scrollHeight : 0, body ? body.scrollHeight : 0);
+          var h2 = Math.max(docEl ? docEl.offsetHeight : 0, body ? body.offsetHeight : 0);
+          return Math.max(h1, h2);
+        } catch (e) {
+          return 0;
+        }
+      }
+
+      window.__mdv_getHeight = function() { return calcHeight(); };
+
+      function post() {
+        var h = calcHeight();
+        if (h && window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.mermaidHeight) {
+          window.webkit.messageHandlers.mermaidHeight.postMessage(h);
+        }
+      }
+
+      window.addEventListener('load', function() {
+        setTimeout(post, 120);
+        setTimeout(post, 260);
+        setTimeout(post, 520);
+      });
+
+      try {
+        var obs = new MutationObserver(function() { post(); });
+        obs.observe(document.body, { childList: true, subtree: true, attributes: true });
+      } catch (e) {}
+
+      try {
+        var ro = new ResizeObserver(function() { post(); });
+        ro.observe(document.body);
+      } catch (e) {}
+    })();
+    """
 }
+
 
 // MARK: - Convenience Registration
 

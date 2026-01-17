@@ -13,12 +13,15 @@ final class CrashReproViewController: UIViewController {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var messages: [String] = []
     private var cachedHeights: [Int: CGFloat] = [:]
-    private var heightCalculator: MarkdownHeightCalculator?
     private let cellVerticalPadding: CGFloat = 24
-    private let heightSafetyPadding: CGFloat = 8
     private let firstRowExtraPadding: CGFloat = 12
-    private var visibleRowCount: Int = 0
-    private var nextIndexToMeasure: Int = 0
+
+    private var pendingHeightUpdateRows = Set<Int>()
+    private var isHeightUpdateScheduled = false
+    private let rowHeightUpdateThreshold: CGFloat = 2
+
+    private var shouldApplyHeightUpdates = false
+    private var isInitialAppearance = true
 
     private lazy var closeButton: UIButton = {
         let button = UIButton(type: .system)
@@ -34,8 +37,39 @@ final class CrashReproViewController: UIViewController {
         view.backgroundColor = .systemBackground
         setupTableView()
         setupCloseButton()
-        heightCalculator = MarkdownHeightCalculator(hostView: view)
         prepareMessages()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        shouldApplyHeightUpdates = false
+
+        if isInitialAppearance {
+            tableView.alpha = 0
+        } else {
+            tableView.alpha = 1
+        }
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        shouldApplyHeightUpdates = true
+
+        guard isInitialAppearance else { return }
+        isInitialAppearance = false
+
+        DispatchQueue.main.async { [weak self] in
+            self?.flushPendingHeightUpdates()
+        }
+
+        UIView.animate(
+            withDuration: 0.16,
+            delay: 0.02,
+            options: [.curveEaseInOut, .allowUserInteraction],
+            animations: { [weak self] in
+                self?.tableView.alpha = 1
+            }
+        )
     }
 
     private func setupTableView() {
@@ -66,153 +100,52 @@ final class CrashReproViewController: UIViewController {
     }
 
     private func prepareMessages() {
-        let baseTableArray = ["""
-            # 安装方案
+        let baseTableArray = [
+            "在 Android 上实现贝塞尔曲线动画，通常可以使用 `ValueAnimator` 与 `Path`、`PathInterpolator` 等类结合，实现平滑的曲线动画效果。下面是一个使用 **贝塞尔曲线（Bezier Curve）** 实现动画的示例代码，展示如何在屏幕上绘制一个点沿着贝塞尔曲线运动的动画。\n\n---\n\n## ✅ 示例代码：贝塞尔曲线动画（Android）\n\n### 📌 1. 在布局文件中添加一个 `View`\n\n```xml\n<!-- res/layout/activity_main.xml -->\n<FrameLayout\n    xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    android:layout_width=\"match_parent\"\n    android:layout_height=\"match_parent\">\n\n    <com.example.bezieranimation.BezierView\n        android:id=\"@+id/bezierView\"\n        android:layout_width=\"match_parent\"\n        android:layout_height=\"match_parent\" />\n</FrameLayout>\n```\n\n---\n\n### 📌 2. 自定义 `BezierView` 类\n\n```java\n// BezierView.java\npublic class BezierView extends View {\n\n    private static final int ANIMATION_DURATION = 2000;\n    private Path mPath;\n    private PathInterpolator mInterpolator;\n    private float mX, mY;\n\n    public BezierView(Context context) {\n        super(context);\n        init();\n    }\n\n    public BezierView(Context context, AttributeSet attrs) {\n        super(context, attrs);\n        init();\n    }\n\n    private void init() {\n        mPath = new Path();\n        mInterpolator = new PathInterpolator(0.4f, 0.2f, 0.6f, 0.9f);\n    }\n\n    @Override\n    protected void onDraw(Canvas canvas) {\n        super.onDraw(canvas);\n\n        Paint paint = new Paint();\n        paint.setColor(Color.RED);\n        paint.setStrokeWidth(5);\n        paint.setStyle(Paint.Style.STROKE);\n\n        // 绘制贝塞尔曲线\n        canvas.drawPath(mPath, paint);\n\n        // 绘制动画点\n        Paint pointPaint = new Paint();\n        pointPaint.setColor(Color.BLUE);\n        canvas.drawCircle(mX, mY, 10, pointPaint);\n    }\n\n    public void startAnimation() {\n        // 定义贝塞尔曲线路径\n        mPath.reset();\n        mPath.moveTo(100, 500); // 起点\n        mPath.cubicTo(300, 100, 500, 100, 700, 500); // 控制点1、控制点2、终点\n\n        // 创建动画\n        ValueAnimator animator = ValueAnimator.ofFloat(0, 1);\n        animator.setInterpolator(mInterpolator);\n        animator.setDuration(ANIMATION_DURATION);\n        animator.addUpdateListener(animation -> {\n            float t = animation.getAnimatedFraction();\n            float x = mPath.getInterpolation(t).x;\n            float y = mPath.getInterpolation(t).y;\n            mX = x;\n            mY = y;\n            invalidate();\n        });\n\n        animator.start();\n    }\n}\n```\n\n---\n\n### 📌 3. 在 `Activity` 中启动动画\n\n```java\n// MainActivity.java\npublic class MainActivity extends AppCompatActivity {\n\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        setContentView(R.layout.activity_main);\n\n        BezierView bezierView = findViewById(R.id.bezierView);\n        bezierView.startAnimation();\n    }\n}\n```\n\n---\n\n## ✅ 说明\n\n- `Path`：定义贝塞尔曲线的形状。\n- `PathInterpolator`：用于定义动画的插值方式（即曲线的缓动效果）。\n- `ValueAnimator`：用于控制动画的播放和更新。\n- `onDraw()`：用于绘制贝塞尔曲线和动画点。\n\n---\n\n## ✅ 可选扩展\n\n- 使用 `ObjectAnimator` 与 `PointF` 或 `Point` 实现更复杂的动画。\n- 使用 `BezierPathInterpolator`（自定义插值器）实现更精细的动画控制。\n- 使用 `Canvas` 的 `drawPath()` 方法绘制路径。\n- 使用 `XML` 定义动画路径，实现更灵活的动画定义。\n\n---\n\n## ✅ 总结\n\n在 Android 中实现贝塞尔曲线动画，可以使用以下组件：\n\n| 组件 | 作用 |\n|------|------|\n| `Path` | 定义贝塞尔曲线的形状 |\n| `PathInterpolator` | 定义动画的缓动曲线 |\n| `ValueAnimator` | 控制动画的播放和更新 |\n| `Canvas` | 绘制动画路径和点 |\n\n如需实现更复杂的动画（如多点动画、路径跟随等），可以进一步扩展该示例。\n\n---\n\n如果你希望我帮你实现更复杂的动画（如手势跟随、路径绘制动画等），也可以告诉我！",
             
+            "圆周率（π）是数学中一个非常重要的常数，表示圆的周长与直径的比值。它在数学中出现了很多种形式，尤其是在几何、微积分、数论等领域。以下是一些常见的**圆周率的数学公式**或表达方式：\n\n---\n\n## 一、基本定义（几何）\n\n1. **圆的周长公式**：\n   $$\n   C = \\pi d = 2\\pi r\n   $$\n   - $C$ 是圆的周长\n   - $d$ 是直径\n   - $r$ 是半径\n\n2. **圆的面积公式**：\n   $$\n   A = \\pi r^2\n   $$\n\n---\n\n## 二、无穷级数（用于计算 π）\n\n1. **莱布尼茨公式**（级数形式）：\n   $$\n   \\pi = 4 \\left(1 - \\frac{1}{3} + \\frac{1}{5} - \\frac{1}{7} + \\cdots \\right)\n   $$\n\n2. **格雷戈里-莱布尼茨级数**：\n   $$\n   \\pi = 4 \\sum_{n=0}^{\\infty} \\frac{(-1)^n}{2n+1}\n   $$\n\n3. **拉马努金公式**（快速收敛的公式）：\n   $$\n   \\pi = \\frac{1}{4} \\sum_{k=0}^{\\infty} \\frac{(6k)!}{(k!)^3 (3k)!} \\cdot \\frac{13591409 + 545140134k}{640320^{3k}}\n   $$\n\n---\n\n## 三、积分表达式\n\n1. **积分表达式（由勒让德提出）**：\n   $$\n   \\pi = 2 \\int_{0}^{1} \\frac{1}{\\sqrt{1 - x^2}} \\, dx\n   $$\n\n2. **积分表达式（由欧拉提出）**：\n   $$\n   \\pi = 4 \\int_{0}^{1} \\frac{1}{1 + x^2} \\, dx\n   $$\n\n---\n\n## 四、无理数和超越数的表达\n\n1. **π 是无理数**（1768 年由 Lambert 证明）：\n   - 不能表示为两个整数的比值。\n\n2. **π 是超越数**（1882 年由林德曼 证明）：\n   - 不是任何非零整系数多项式方程的根。\n\n---\n\n## 五、其他数学公式中出现 π\n\n1. **欧拉公式（复数中）**：\n   $$\n   e^{i\\pi} + 1 = 0\n   $$\n\n2. **高斯积分**：\n   $$\n   \\int_{-\\infty}^{\\infty} e^{-x^2} dx = \\sqrt{\\pi}\n   $$\n\n3. **球体体积公式**：\n   $$\n   V = \\frac{4}{3}\\pi r^3\n   $$\n\n4. **球体表面积公式**：\n   $$\n   A = 4\\pi r^2\n   $$\n\n---\n\n## 六、π 的近似值表达式\n\n1. **常用近似值**：\n   $$\n   \\pi \\approx 3.141592653589793...\n   $$\n\n2. **分数近似**：\n   $$\n   \\frac{22}{7} \\approx 3.142857\n   $$\n   $$\n   \\frac{355}{113} \\approx 3.1415929\n   $$\n\n---\n\n## 七、π 在复分析中的表达\n\n1. **欧拉公式（复数）**：\n   $$\n   e^{i\\pi} = -1\n   $$\n\n2. **Γ 函数的性质**：\n   $$\n   \\Gamma\\left(\\frac{1}{2}\\right) = \\sqrt{\\pi}\n   $$\n\n---\n\n## 八、π 在概率与统计中的应用\n\n1. **正态分布的密度函数**：\n   $$\n   f(x) = \\frac{1}{\\sqrt{2\\pi}} e^{-\\frac{x^2}{2}}\n   $$\n\n---\n\n## 总结\n\n圆周率 π 出现在数学的多个领域，形式多样，包括：\n\n- 几何公式\n- 级数表达\n- 积分表达\n- 复数与复分析\n- 概率与统计\n- 无理数与超越数的性质\n\n如果你对某个特定领域（比如几何、微积分、复数等）的 π 公式感兴趣，可以告诉我，我可以进一步详细讲解！",
             
-            ## 方案 1: GitHub 直接安装 (最快)
+            "学习微积分是一个循序渐进的过程，需要从基础的数学知识开始，逐步深入到微分和积分的概念，最后掌握更高级的应用。以下是一个 **Mermaid 流程图**，展示了学习微积分的步骤和路径：\n\n```mermaid\ngraph TD\n    A[1. 数学基础] --> B[2. 函数与图像]\n    B --> C[3. 极限与连续]\n    C --> D[4. 导数与微分]\n    D --> E[5. 积分与微积分基本定理]\n    E --> F[6. 多变量微积分]\n    F --> G[7. 微分方程]\n    G --> H[8. 级数与级数求和]\n    H --> I[9. 应用与实际问题]\n    I --> J[10. 进阶与拓展]\n```\n\n---\n\n## 📌 学习微积分的步骤说明\n\n### 1. **数学基础**\n- 学习**代数、几何、三角函数**等基础知识。\n- 熟悉**函数**的定义、性质和图像（如一次函数、二次函数、指数函数、对数函数等）。\n\n---\n\n### 2. **函数与图像**\n- 学习**函数的定义、图像、单调性、奇偶性、周期性**等。\n- 熟悉**函数的运算**（加减乘除、复合函数、反函数等）。\n\n---\n\n### 3. **极限与连续**\n- 理解**极限的概念**（左右极限、无穷大极限、极限的性质）。\n- 学习**连续函数的定义**和判断方法。\n\n---\n\n### 4. **导数与微分**\n- 理解**导数的定义**（瞬时变化率）。\n- 掌握**导数的计算方法**（基本导数公式、求导法则、隐函数求导、参数方程求导等）。\n- 熟悉**导数的应用**（极值、单调性、曲线的切线、最优化问题）。\n\n---\n\n### 5. **积分与微积分基本定理**\n- 学习**不定积分与定积分的定义**。\n- 掌握**积分法则**（换元积分、分部积分、积分表等）。\n- 理解**微积分基本定理**（导数与积分的联系）。\n\n---\n\n### 6. **多变量微积分**\n- 学习**偏导数、梯度、方向导数**等。\n- 掌握**多重积分**（二重积分、三重积分）和**曲线积分、曲面积分**。\n- 熟悉**向量场、散度、旋度**等。\n\n---\n\n### 7. **微分方程**\n- 学习**常微分方程和偏微分方程**的基本概念。\n- 掌握**解微分方程的方法**（变量分离、积分因子、特征方程、拉普拉斯变换等）。\n- 理解**微分方程在物理、工程中的应用**。\n\n---\n\n### 8. **级数与级数求和**\n- 学习**数列与级数的基本概念**（收敛、发散、收敛性判别）。\n- 掌握**幂级数、泰勒级数、傅里叶级数**等。\n- 熟悉**级数在近似计算与函数展开中的应用**。\n\n---\n\n### 9. **应用与实际问题**\n- 学习如何将微积分用于**物理、工程、经济学、生物学**等领域的实际问题。\n- 掌握**优化问题、运动学、力学、热力学**等领域的建模与求解方法。\n\n---\n\n### 10. **进阶与拓展**\n- 学习**实变函数、复变函数、泛函分析、拓扑学**等高级数学内容。\n- 掌握**数学建模、数值分析、计算数学**等方向。\n- 深入学习**微积分在机器学习、人工智能、数据科学**等领域的应用。\n\n---\n\n## ✅ 学习建议\n\n- **循序渐进**：不要急于求成，打好基础是关键。\n- **多做练习**：通过大量习题巩固知识。\n- **结合图形**：用图像理解抽象概念（如导数的几何意义）。\n- **善用工具**：使用**GeoGebra、Desmos、WolframAlpha、MATLAB、Python**等工具辅助学习。\n- **多看视频**：YouTube、B站、Coursera、edX 等平台有大量优质微积分课程。\n\n---\n\n如果你希望我帮你制定一个具体的学习计划（如每天学习内容、时间安排等），也可以告诉我你的学习目标和时间安排，我可以为你量身定制一个学习计划！"
             
-            `npm install -g github:zjc19891106/easeim-mcp-server`
-            
-            或指定分支/tag
-            
-            `npm install -g github:zjc19891106/easeim-mcp-server#v1.0.0`
-            
-            
-            ---
-            ## 方案 2: 手动配置路径 (零发布)
-            
-            用户克隆repo或者下载源码
-            git clone https://github.com/zjc19891106/easeim-mcp-server
-            cd easeim-mcp-server/EMIntegrationAssistant/easeim-mcp-server/ && npm install && npm run build
-            
-            ## 配置 Claude（使用绝对路径）
-            ```Json
-            {
-              "mcpServers": {
-                "easeim":{
-                  "command": "node",
-                  "args": ["/Path/easeim-mcp-server/EMIntegrationAssistant/easeim-mcp-server/dist/index.js"]
-                }
-              }
-            }
-            ```
-            """
-        ,
-        """
-            # MCP 工具列表（19 个）
-
-            ### 基础工具（10 个）
-
-            | 工具 | 描述 |
-            |------|------|
-            | `lookup_error` | 查询错误码含义、原因和解决方案 |
-            | `search_api` | 搜索 API 文档，支持平台/层级过滤 |
-            | `search_source` | 搜索 UIKit 源码，支持组件过滤 |
-            | `get_guide` | 获取集成指南和最佳实践 |
-            | `diagnose` | 根据症状诊断错误原因 |
-            | `read_doc` | 读取完整 API 文档 |
-            | `read_source` | 读取源码文件（支持行范围） |
-            | `list_config_options` | 列出 Appearance 配置项 |
-            | `get_extension_points` | 获取可继承类和协议 |
-            | `get_config_usage` | 查询配置项的使用详情 |
-           """
-                              ,
-        """
-            # 智能化工具（4 个）
-
-            | 工具 | 描述 |
-            |------|------|
-            | `smart_assist` | 🧠 自然语言智能助手，**支持上下文感知**，自动理解意图和连续性问题 |
-            | `generate_code` | 📝 代码生成器，生成完整代码模板 |
-            | `explain_class` | 📖 类解释器，说明继承关系和用法 |
-            | `list_scenarios` | 📋 列出所有支持的开发场景 |
-          """,
-                              """
-# 1. 数据处理与索引生成
-- ✅ 文档索引生成脚本
-  - 解析 49 个 API 模块文档
-  - 提取 99 个错误码（包含描述、原因、解决方案）
-  - 生成 56 个 API 快速索引
-  - 索引大小：113 KB
-
-- ✅ 源码索引生成脚本
-  - 解析 3 个 UIKit 组件
-  - 处理 326 个 Swift 源文件
-  - 提取 2605 个代码符号（类、方法、属性等）
-  - 索引大小：862 KB
-""",
-                              """
-# 2. MCP Server 核心功能
-- ✅ 搜索引擎
-  - `DocSearch` - 文档搜索引擎（支持 API、错误码、模块搜索）
-  - `SourceSearch` - 源码搜索引擎（支持类、方法、属性搜索）
-
-- ✅ MCP Tools（14 个工具）
-  1. `lookup_error` - 错误码查询
-  2. `search_api` - API 搜索（支持中英文）
-  3. `search_source` - 源码搜索（支持按组件过滤）
-  4. `get_guide` - 获取集成指南
-  5. `diagnose` - 问题诊断（根据症状匹配错误码）
-  6. `read_doc` - 读取完整文档
-  7. `read_source` - 读取源码文件
-  8. `list_config_options` - 列出 UIKit 配置项 (New!)
-  9. `get_extension_points` - 获取 UIKit 扩展点 (New!)
-  10. `get_config_usage` - 查询配置项使用情况 (New!)
-  11. `smart_assist` - 🧠 智能助手 (New!)
-  12. `generate_code` - 📝 代码生成器 (New!)
-  13. `explain_class` - 📖 类解释器 (New!)
-  14. `list_scenarios` - 📋 场景列表 (New!)
-""", """
-# 3. 项目配置与文档
-- ✅ TypeScript 配置
-- ✅ npm 包配置
-- ✅ 完整的 README 文档
-- ✅ Claude Code 配置示例
-- ✅ 项目结构清晰
-"""
         ]
         messages = baseTableArray
         cachedHeights.removeAll()
-        visibleRowCount = 0
-        nextIndexToMeasure = 0
         tableView.reloadData()
-        precomputeHeightsSequentially()
     }
 
     @objc private func closeTapped() {
         dismiss(animated: true)
     }
 
-    private func precomputeHeightsSequentially() {
-        guard let calculator = heightCalculator else { return }
-        let width = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
-        let contentWidth = width - 32
+    private func scheduleHeightUpdates(forRow row: Int) {
+        pendingHeightUpdateRows.insert(row)
+        guard shouldApplyHeightUpdates else { return }
+        guard !isHeightUpdateScheduled else { return }
+        isHeightUpdateScheduled = true
 
-        guard nextIndexToMeasure < messages.count else { return }
-        let index = nextIndexToMeasure
-        let markdown = messages[index]
-        nextIndexToMeasure += 1
-
-        calculator.height(for: markdown, width: contentWidth, configuration: .default) { [weak self] height in
-            guard let self else { return }
-            let extraPadding = index == 0 ? self.firstRowExtraPadding : 0
-            self.cachedHeights[index] = height + self.cellVerticalPadding + self.heightSafetyPadding + extraPadding
-            self.visibleRowCount += 1
-            let indexPath = IndexPath(row: index, section: 0)
-            if self.visibleRowCount == 1 {
-                self.tableView.insertRows(at: [indexPath], with: .none)
-            } else {
-                self.tableView.insertRows(at: [indexPath], with: .none)
-            }
-            self.precomputeHeightsSequentially()
+        DispatchQueue.main.async { [weak self] in
+            self?.flushPendingHeightUpdates()
         }
     }
+
+    private func flushPendingHeightUpdates() {
+        isHeightUpdateScheduled = false
+
+        guard !pendingHeightUpdateRows.isEmpty else { return }
+        pendingHeightUpdateRows.removeAll()
+
+        UIView.performWithoutAnimation { [weak self] in
+            guard let self else { return }
+            self.tableView.beginUpdates()
+            self.tableView.endUpdates()
+        }
+    }
+
 }
 
 extension CrashReproViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        visibleRowCount
+        messages.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -222,212 +155,80 @@ extension CrashReproViewController: UITableViewDataSource, UITableViewDelegate {
         ) as? MarkdownHistoryCell else {
             return UITableViewCell(style: .default, reuseIdentifier: "fallback")
         }
-        let height = cachedHeights[indexPath.row]
-        cell.configure(markdown: messages[indexPath.row], height: height)
+        cell.configure(markdown: messages[safe: indexPath.row] ?? "")
+
+        cell.onContentHeightChange = { [weak self, weak tableView, weak cell] contentHeight in
+            guard let self, let tableView, let cell else { return }
+            guard let currentIndexPath = tableView.indexPath(for: cell) else { return }
+            let row = currentIndexPath.row
+            guard row < self.messages.count else { return }
+
+            let extraPadding = row == 0 ? self.firstRowExtraPadding : 0
+            let newRowHeight = contentHeight + self.cellVerticalPadding + extraPadding
+
+            if let cached = self.cachedHeights[row], abs(cached - newRowHeight) <= self.rowHeightUpdateThreshold {
+                return
+            }
+            self.cachedHeights[row] = newRowHeight
+            self.scheduleHeightUpdates(forRow: row)
+        }
+
         return cell
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        if let height = cachedHeights[indexPath.row] {
-            return height
-        }
-        return tableView.estimatedRowHeight
-    }
-
-    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-        guard let markdownCell = cell as? MarkdownHistoryCell else { return }
-        let contentWidth = tableView.bounds.width - 32
-        let extraPadding = indexPath.row == 0 ? firstRowExtraPadding : 0
-        let measured = markdownCell.measuredHeight(forWidth: contentWidth) + cellVerticalPadding + extraPadding
-        if let cached = cachedHeights[indexPath.row] {
-            if abs(cached - measured) > 2 {
-                cachedHeights[indexPath.row] = measured
-                tableView.beginUpdates()
-                tableView.endUpdates()
-            }
-        } else {
-            cachedHeights[indexPath.row] = measured
-            tableView.beginUpdates()
-            tableView.endUpdates()
-        }
+        cachedHeights[indexPath.row] ?? tableView.estimatedRowHeight
     }
 }
 
 final class MarkdownHistoryCell: UITableViewCell {
     static let reuseIdentifier = "MarkdownHistoryCell"
-    private static let estimatedContentHeight: CGFloat = 120 - 24
 
     private let markdownView = MarkdownViewTextKit()
-    private var heightConstraint: NSLayoutConstraint?
+
+    var onContentHeightChange: ((CGFloat) -> Void)?
+
+    private var renderToken = UUID()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
         contentView.clipsToBounds = true
+
         markdownView.enableTypewriterEffect = false
-        contentView.addSubview(markdownView)
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.clipsToBounds = true
 
-        heightConstraint = markdownView.heightAnchor.constraint(equalToConstant: 0)
-        heightConstraint?.priority = .required
+        markdownView.onHeightChange = { [weak self] newHeight in
+            guard let self else { return }
+            let token = self.renderToken
+            guard token == self.renderToken else { return }
+            self.onContentHeightChange?(newHeight)
+        }
 
+        contentView.addSubview(markdownView)
         NSLayoutConstraint.activate([
             markdownView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             markdownView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             markdownView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            markdownView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
-            heightConstraint ?? markdownView.heightAnchor.constraint(equalToConstant: 0)
+            markdownView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12)
         ])
-
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(markdown: String, height: CGFloat?) {
-        if let height {
-            heightConstraint?.constant = height - 24
-        } else {
-            heightConstraint?.constant = Self.estimatedContentHeight
-        }
+    func configure(markdown: String) {
+        renderToken = UUID()
         markdownView.markdown = markdown
-    }
-
-    func measuredHeight(forWidth width: CGFloat) -> CGFloat {
-        layoutIfNeeded()
-        let size = markdownView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height)
-        )
-        return max(size.height, markdownView.bounds.height)
+        setNeedsLayout()
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        renderToken = UUID()
+        onContentHeightChange = nil
         markdownView.resetForReuse()
-        heightConstraint?.constant = Self.estimatedContentHeight
-    }
-}
-
-final class MarkdownHeightCalculator {
-    private struct Task {
-        let key: String
-        let markdown: String
-        let width: CGFloat
-        let configuration: MarkdownConfiguration
-        let completion: (CGFloat) -> Void
-    }
-
-    private let sizingView = MarkdownViewTextKit()
-    private let containerView = UIView()
-    private var widthConstraint: NSLayoutConstraint?
-    private var pendingTasks: [Task] = []
-    private var isMeasuring = false
-    private var cache: [String: CGFloat] = [:]
-    private var token: Int = 0
-    private var timeoutWorkItem: DispatchWorkItem?
-
-    init(hostView: UIView) {
-        containerView.isHidden = true
-        containerView.isUserInteractionEnabled = false
-        containerView.translatesAutoresizingMaskIntoConstraints = false
-        hostView.addSubview(containerView)
-
-        NSLayoutConstraint.activate([
-            containerView.topAnchor.constraint(equalTo: hostView.topAnchor, constant: -10000),
-            containerView.leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
-            containerView.trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
-            containerView.heightAnchor.constraint(equalToConstant: 1)
-        ])
-
-        sizingView.translatesAutoresizingMaskIntoConstraints = false
-        sizingView.enableTypewriterEffect = false
-        containerView.addSubview(sizingView)
-        widthConstraint = sizingView.widthAnchor.constraint(equalToConstant: hostView.bounds.width)
-        widthConstraint?.priority = .required
-
-        NSLayoutConstraint.activate([
-            sizingView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            sizingView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            sizingView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            widthConstraint ?? sizingView.widthAnchor.constraint(equalToConstant: hostView.bounds.width)
-        ])
-    }
-
-    func height(
-        for markdown: String,
-        width: CGFloat,
-        configuration: MarkdownConfiguration,
-        completion: @escaping (CGFloat) -> Void
-    ) {
-        let key = Self.makeKey(markdown: markdown, width: width, configuration: configuration)
-        if let cached = cache[key] {
-            completion(cached)
-            return
-        }
-
-        let task = Task(
-            key: key,
-            markdown: markdown,
-            width: width,
-            configuration: configuration,
-            completion: completion
-        )
-        pendingTasks.append(task)
-        startNextIfNeeded()
-    }
-
-    private func startNextIfNeeded() {
-        guard !isMeasuring, !pendingTasks.isEmpty else { return }
-        isMeasuring = true
-        let task = pendingTasks.removeFirst()
-        token += 1
-        let currentToken = token
-
-        sizingView.configuration = task.configuration
-        widthConstraint?.constant = task.width
-        containerView.layoutIfNeeded()
-
-        timeoutWorkItem?.cancel()
-        let timeout = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            guard currentToken == self.token else { return }
-            let fallbackHeight = self.sizingView.systemLayoutSizeFitting(
-                CGSize(width: task.width, height: UIView.layoutFittingCompressedSize.height)
-            ).height
-            let finalHeight = max(1, fallbackHeight)
-            self.cache[task.key] = finalHeight
-            task.completion(finalHeight)
-            self.isMeasuring = false
-            self.startNextIfNeeded()
-        }
-        timeoutWorkItem = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: timeout)
-
-        sizingView.onHeightChange = { [weak self] height in
-            guard let self else { return }
-            guard currentToken == self.token else { return }
-            let fittingHeight = self.sizingView.systemLayoutSizeFitting(
-                CGSize(width: task.width, height: UIView.layoutFittingCompressedSize.height)
-            ).height
-            let finalHeight = max(height, fittingHeight, 1)
-            self.cache[task.key] = finalHeight
-            task.completion(finalHeight)
-            self.timeoutWorkItem?.cancel()
-            self.isMeasuring = false
-            self.startNextIfNeeded()
-        }
-        sizingView.markdown = task.markdown
-    }
-
-    private static func makeKey(
-        markdown: String,
-        width: CGFloat,
-        configuration: MarkdownConfiguration
-    ) -> String {
-        let fontSignature = "\(configuration.bodyFont.pointSize)-\(configuration.codeFont.pointSize)-\(configuration.headingSpacing)-\(configuration.paragraphSpacing)"
-        let colorSignature = "\(configuration.textColor.description)-\(configuration.codeBackgroundColor.description)"
-        return "\(markdown.hashValue)|\(width)|\(fontSignature)|\(colorSignature)"
     }
 }
