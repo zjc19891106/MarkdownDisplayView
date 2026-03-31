@@ -879,6 +879,10 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## 更新日志
 
+### 1.7.0 (2026-03-31)
+
+- 🚀 **lineSpacing配置** - 新增 `lineSpacing` 配置项，支持控制正文行高
+
 ### 1.6.9 (2026-03-17)
 
 - 🔗 **链接下划线可配置** - 新增 `linkUnderlineEnabled` 配置项，支持控制链接是否显示下划线

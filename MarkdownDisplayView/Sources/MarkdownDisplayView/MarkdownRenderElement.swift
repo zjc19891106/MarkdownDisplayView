@@ -193,6 +193,7 @@ public struct MarkdownConfiguration: Sendable {
     public var typewriterHeightUpdateInterval: Int = 20
     
     
+    public var lineSpacing: CGFloat // 正文行间距
     public var headingTopSpacing: CGFloat       // 标题上方间距（标题与前一个内容之间的距离）
     public var headingBottomSpacing: CGFloat    // 标题下方间距（标题与后一个内容之间的距离）
     public var paragraphTopSpacing: CGFloat     // 普通段落上方间距
@@ -275,6 +276,7 @@ public struct MarkdownConfiguration: Sendable {
             streamMinModuleLength: 50,
             typewriterTextMode: .reveal,
             typewriterHeightUpdateInterval: 20,
+            lineSpacing: 6,
             headingTopSpacing: 20,                  // 推荐：标题前留大一点空
             headingBottomSpacing: 12,               // 标题后稍小一点
             paragraphTopSpacing: 8,                 // 普通段落前留一点空

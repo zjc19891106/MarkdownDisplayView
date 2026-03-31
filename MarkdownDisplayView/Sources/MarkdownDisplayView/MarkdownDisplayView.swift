@@ -2120,8 +2120,13 @@ public final class MarkdownViewTextKit: UIView {
                 let isInlineSegment = attributedString.attribute(inlineSegmentAttributeKey, at: 0, effectiveRange: nil) != nil
                 let topSpacing = suppressTopSpacing ? 0 : (isInlineSegment ? 0 : configuration.paragraphTopSpacing)
                 let bottomSpacing = suppressBottomSpacing ? 0 : (isInlineSegment ? 0 : configuration.paragraphBottomSpacing)
+                
+                let mutableAttri = NSMutableAttributedString(attributedString: attributedString)
+                let paragraphStyle = NSMutableParagraphStyle()
+                paragraphStyle.lineSpacing = configuration.lineSpacing
+                mutableAttri.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: mutableAttri.length))
                 return createTextView(
-                    with: attributedString,
+                    with: mutableAttri,
                     width: containerWidth,
                     insets: UIEdgeInsets(top: topSpacing, left: 0, bottom: bottomSpacing, right: 0),
                     fixedHeight: precalculatedHeight

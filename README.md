@@ -863,6 +863,10 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## Changelog
 
+### 1.7.0 (2026-03-31)
+
+- 🚀 **lineSpacing configuration** - Added the `lineSpacing` configuration option to support controlling the line height of the main text
+
 ### 1.6.9 (2026-03-17)
 
 - 🔗 **Link Underline Control** - Added `linkUnderlineEnabled` configuration option to control whether links display underlines
