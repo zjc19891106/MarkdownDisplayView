@@ -1802,12 +1802,15 @@ private final class AIChatStreamSession: NSObject, URLSessionDataDelegate {
             onToolCalls(calls, reasoningContent)
         }
         onComplete()
+        // 正常完成后 invalidate session，打破 URLSession 对 delegate 的强引用环
+        session.finishTasksAndInvalidate()
     }
 
     private func finishWithError(_ message: String) {
         guard !isFinished else { return }
         isFinished = true
         onError(message)
+        session.finishTasksAndInvalidate()
     }
 }
 
@@ -2107,6 +2110,7 @@ final class AIChatViewController: UIViewController {
 
     deinit {
         streamingScrollDisplayLink?.invalidate()
+        streamSession?.cancel()
         pendingPreparationTokens.values.forEach { $0.cancel() }
         NotificationCenter.default.removeObserver(self)
     }
