@@ -36,7 +36,6 @@ extension MarkdownViewTextKit {
         mdLog("[FOOTNOTE_DEBUG] 🟢 isRealStreamingMode set to TRUE")
         autoScrollEnabled = autoScrollBottom
         userScrolledAway = false
-        realStreamAccumulatedText = ""
         realStreamParsedElementCount = 0
         realStreamRenderGeneration += 1
         pendingRealStreamElements.removeAll()
@@ -113,7 +112,6 @@ extension MarkdownViewTextKit {
         }
 
         // 原样累计网络 delta。StreamBuffer 只决定渲染边界，不得改写最终 Markdown。
-        realStreamAccumulatedText += data
 
         // 使用 StreamBuffer 检测完整模块
         let result = streamBuffer.append(data)
@@ -425,10 +423,10 @@ extension MarkdownViewTextKit {
         }
 
         // 更新 markdown 属性（用于后续非流式访问）
-        markdown = realStreamAccumulatedText
+        markdown = streamBuffer.getFullText()
 
         // ⚠️ 解析脚注，但延迟到 TypewriterEngine 完成后再渲染
-        let (_, footnotes) = preprocessFootnotes(realStreamAccumulatedText)
+        let (_, footnotes) = preprocessFootnotes(streamBuffer.getFullText())
         mdLog("[FOOTNOTE_DEBUG] 🔴 endRealStreaming parsed \(footnotes.count) footnotes, will defer rendering")
 
         // ⭐️ 关键修复：保存脚注和完成回调，等待 TypewriterEngine 完成后统一处理
@@ -472,7 +470,10 @@ extension MarkdownViewTextKit {
 
             let elapsed = (CFAbsoluteTimeGetCurrent() - self.streamingStartTimestamp) * 1000
             mdLog("✅ [RealStream] Completed in \(String(format: "%.1f", elapsed))ms")
-            mdLog("Full text is:\n\(self.realStreamAccumulatedText)")
+            mdLog("Full text is:\n\(self.streamBuffer.getFullText())")
+
+            // 释放流式缓冲区的全文（markdown 已持有全文，buffer 不再需要）
+            self.streamBuffer.reset()
         }
 
         realStreamDrainCompletion = finishBlock

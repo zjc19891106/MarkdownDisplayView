@@ -340,7 +340,6 @@ public final class MarkdownViewTextKit: UIView {
     // MARK: - Real streaming state
 
     var isRealStreamingMode = false
-    var realStreamAccumulatedText = ""
     var realStreamParsedElementCount = 0
     struct PendingRealStreamElement {
         var element: MarkdownRenderElement

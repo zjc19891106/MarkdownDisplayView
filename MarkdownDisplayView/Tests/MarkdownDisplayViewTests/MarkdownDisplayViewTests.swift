@@ -482,7 +482,6 @@ import UIKit
 
     #expect(view.isRealStreamingMode == false)
     #expect(view.isStreaming == false)
-    #expect(view.markdown == view.realStreamAccumulatedText)
     #expect(view.markdown == markdown)
     #expect(view.markdown.contains("Character Stream"))
     #expect(view.markdown.contains("Footnote content"))

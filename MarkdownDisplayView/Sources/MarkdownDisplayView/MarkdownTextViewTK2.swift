@@ -524,9 +524,10 @@ extension MarkdownTextViewTK2 {
             return
         }
 
-        // 必须是不可变快照：textStorage 接下来会被就地增量修改，
-        // 直接持有它会让"原文"随播放一起变化。
-        let attr = NSAttributedString(attributedString: textStorage)
+        // 优先直接持有不可变的 attributedText 作为原文快照（免拷贝）；
+        // 极端情况下才回退到拷贝 textStorage。textStorage 在播放期间会被就地增量修改，
+        // 而 attributedText 保持不变。
+        let attr: NSAttributedString = attributedText ?? NSAttributedString(attributedString: textStorage)
 
         mdLog("[TYPEWRITER] 🎯 prepareForTypewriter 开始, 文本长度: \(attr.length), 内容: \(attr.string.prefix(50))...")
 
