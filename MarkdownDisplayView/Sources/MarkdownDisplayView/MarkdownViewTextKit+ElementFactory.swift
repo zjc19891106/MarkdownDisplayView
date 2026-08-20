@@ -431,77 +431,15 @@ extension MarkdownViewTextKit {
         )
         mdLog("[STREAM] 📐 LaTeXAttachment 创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - attachmentStart) * 1000))ms")
 
-        // 创建专用的 TextKit2 TextView 来渲染附件
-        let textKit2Start = CFAbsoluteTimeGetCurrent()
-        let textLayoutManager = NSTextLayoutManager()
-        let textContentStorage = NSTextContentStorage()
-        let textContainer = NSTextContainer(size: CGSize(width: width, height: 0))
-
-        textContentStorage.addTextLayoutManager(textLayoutManager)
-        textLayoutManager.textContainer = textContainer
-        textContainer.lineFragmentPadding = 0
-        textContainer.widthTracksTextView = false
-
-        // 创建包含附件的富文本
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = configuration.latexAlignment
-
-        let attachmentString = NSMutableAttributedString(attachment: attachment)
-        attachmentString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: attachmentString.length))
-
-        textContentStorage.attributedString = attachmentString
-        mdLog("[STREAM] 📐 TextKit2 准备耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - textKit2Start) * 1000))ms")
-
-        // 创建渲染视图
-        let textView = UIView()
-        textView.translatesAutoresizingMaskIntoConstraints = false
-
-        // 让 TextKit2 在这个视图中渲染
-        let layoutStart = CFAbsoluteTimeGetCurrent()
-        textLayoutManager.textViewportLayoutController.layoutViewport()
-        mdLog("[STREAM] 📐 TextKit2 layoutViewport 耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - layoutStart) * 1000))ms")
-
-        // 从 textLayoutManager 获取已渲染的附件视图
-        let viewProviderStart = CFAbsoluteTimeGetCurrent()
-        var attachmentView: UIView?
-        textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { layoutFragment in
-            // 遍历 layoutFragment 中的 textAttachment
-            layoutFragment.textLineFragments.forEach { lineFragment in
-                lineFragment.attributedString.enumerateAttribute(.attachment, in: NSRange(location: 0, length: lineFragment.attributedString.length)) { value, range, stop in
-                    if let attachment = value as? NSTextAttachment {
-                        // 尝试获取附件的 ViewProvider
-                        if let viewProvider = attachment.viewProvider(for: textView, location: layoutFragment.rangeInElement.location, textContainer: textContainer) {
-                            viewProvider.loadView()
-                            if let view = viewProvider.view {
-                                attachmentView = view
-                                stop.pointee = true
-                            }
-                        }
-                    }
-                }
-            }
-            return !((attachmentView != nil))
-        }
-        mdLog("[STREAM] 📐 ViewProvider 获取耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - viewProviderStart) * 1000))ms")
-
-        // 如果通过 ViewProvider 获取到了视图，使用它；否则回退到直接创建
-        let formulaView: UIView
-        if let view = attachmentView {
-            mdLog("[STREAM] 📐 使用 ViewProvider 视图")
-            formulaView = view
-        } else {
-            // 回退方案：直接创建
-            mdLog("[STREAM] 📐 回退方案: 直接创建 LatexMathView")
-            let fallbackStart = CFAbsoluteTimeGetCurrent()
-            let created = LatexMathView.createScrollableView(
-                renderResult: attachment.renderResult,
-                backgroundColor: configuration.latexBackgroundColor,
-                textColor: configuration.latexTextColor,
-                appearance: configuration.latexAppearance
-            )
-            formulaView = created.view
-            mdLog("[STREAM] 📐 回退创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - fallbackStart) * 1000))ms")
-        }
+        // 直接使用已解析的 renderResult 创建公式视图，无需经过 TextKit 2 附件管线
+        // （原来的做法是建一套 NSTextLayoutManager/NSTextContentStorage 再枚举片段取 ViewProvider，
+        //  最终也只是拿到同一个 createScrollableView 产物，纯属冗余）
+        let formulaView = LatexMathView.createScrollableView(
+            renderResult: attachment.renderResult,
+            backgroundColor: attachment.backgroundColor,
+            textColor: attachment.textColor,
+            appearance: attachment.appearance
+        ).view
 
         formulaView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(formulaView)
