@@ -39,64 +39,18 @@ extension MarkdownViewTextKit {
             }
 
         case .table(let tableData):
-            // 使用 NSTextAttachment + UICollectionView 优化表格性能
-            let attachment = MarkdownTableAttachment(
-                data: tableData,
-                config: configuration,
-                containerWidth: containerWidth,
-                onLinkTap: { [weak self] url in
-                    self?.handleLinkTap(url)
-                }
-            )
-            
-            let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.alignment = .left
-            
-            let attrString = NSMutableAttributedString(attachment: attachment)
-            attrString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: attrString.length))
-
-            let view = createTextView(
-                with: attrString,
-                width: containerWidth,
-                fixedHeight: ceil(attachment.totalSize.height + 1)
-            )
-            view.accessibilityIdentifier = "MarkdownAtomicTable"
-            return view
+            return createTableView(data: tableData, width: containerWidth)
 
         case .thematicBreak:
             let view = createThematicBreakView(width: containerWidth)
             view.accessibilityIdentifier = "MarkdownAtomicThematicBreak"
             return view
         case .codeBlock(let language, let attributedString):
-            // 检查是否有自定义代码块渲染器
-            if let lang = language,
-               let renderer = MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: lang) {
-                let rawCode = attributedString.string
-                let view = renderer.renderCodeBlock(code: rawCode, configuration: configuration, containerWidth: containerWidth)
-                view.accessibilityIdentifier = "MarkdownAtomicCodeBlock"
-                return view
-            }
-            // 默认代码块渲染：使用 CodeBlockAttachment 支持横向滚动
-            let codeAttachment = CodeBlockAttachment(
+            return createCodeBlockView(
+                language: language,
                 code: attributedString,
-                configuration: configuration,
-                containerWidth: containerWidth,
-                language: language
+                width: containerWidth
             )
-
-            let codeParagraphStyle = NSMutableParagraphStyle()
-            codeParagraphStyle.alignment = .left
-
-            let codeAttrString = NSMutableAttributedString(attachment: codeAttachment)
-            codeAttrString.addAttribute(.paragraphStyle, value: codeParagraphStyle, range: NSRange(location: 0, length: codeAttrString.length))
-
-            let view = createTextView(
-                with: codeAttrString,
-                width: containerWidth,
-                fixedHeight: ceil(codeAttachment.bounds.height + 1)
-            )
-            view.accessibilityIdentifier = "MarkdownAtomicCodeBlock"
-            return view
         case .quote(let children, let level):
             return createQuoteView(children: children, width: containerWidth, level: level)
 
@@ -121,6 +75,87 @@ extension MarkdownViewTextKit {
             view.accessibilityIdentifier = "MarkdownAtomicCustom"
             return view
         }
+    }
+
+    func createTableView(
+        data: MarkdownTableData,
+        width: CGFloat,
+        layoutResult: MarkdownTableLayoutResult? = nil
+    ) -> UIView {
+        let resolvedLayoutResult = layoutResult ?? (viewportSlots.isEmpty
+            ? nil
+            : viewportTableLayout(data: data, containerWidth: width))
+        let attachment = MarkdownTableAttachment(
+            data: data,
+            config: configuration,
+            containerWidth: width,
+            layoutResult: resolvedLayoutResult,
+            onLinkTap: { [weak self] url in
+                self?.handleLinkTap(url)
+            }
+        )
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .left
+        let attributedText = NSMutableAttributedString(attachment: attachment)
+        attributedText.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: attributedText.length)
+        )
+
+        let view = createTextView(
+            with: attributedText,
+            width: width,
+            fixedHeight: ceil(attachment.totalSize.height + 1)
+        )
+        view.accessibilityIdentifier = "MarkdownAtomicTable"
+        return view
+    }
+
+    func createCodeBlockView(
+        language: String?,
+        code: NSAttributedString,
+        width: CGFloat,
+        metrics: CodeBlockMetrics? = nil
+    ) -> UIView {
+        if let language,
+           let renderer = MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: language) {
+            let view = renderer.renderCodeBlock(
+                code: code.string,
+                configuration: configuration,
+                containerWidth: width
+            )
+            view.accessibilityIdentifier = "MarkdownAtomicCodeBlock"
+            return view
+        }
+
+        let resolvedMetrics = metrics ?? (viewportSlots.isEmpty
+            ? nil
+            : viewportCodeBlockMetrics(for: code))
+        let attachment = CodeBlockAttachment(
+            code: code,
+            configuration: configuration,
+            containerWidth: width,
+            language: language,
+            metrics: resolvedMetrics
+        )
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .left
+        let attributedText = NSMutableAttributedString(attachment: attachment)
+        attributedText.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: attributedText.length)
+        )
+
+        let view = createTextView(
+            with: attributedText,
+            width: width,
+            fixedHeight: ceil(attachment.bounds.height + 1)
+        )
+        view.accessibilityIdentifier = "MarkdownAtomicCodeBlock"
+        return view
     }
 
     // MARK: - Custom View Creation
@@ -258,7 +293,10 @@ extension MarkdownViewTextKit {
 
             // ⭐️ 递归核心：遍历 ListItem 的 children 并创建视图
             // 实际内容宽度 = 总宽度 - 标记宽度 - 间距
-            let itemContentWidth = contentMaxWidth - maxMarkerWidth - configuration.listMarkerSpacing
+            let itemContentWidth = max(
+                1,
+                contentMaxWidth - maxMarkerWidth - configuration.listMarkerSpacing
+            )
 
             let visibleChildren = visibleListChildren(in: item)
             for (index, childElement) in visibleChildren.enumerated() {
@@ -410,7 +448,13 @@ extension MarkdownViewTextKit {
     }
 
     /// 创建 LaTeX 公式视图（使用 LaTeXAttachment + ViewProvider 优化）
-    func createLatexView(latex: String, width: CGFloat, topSpacing: CGFloat, bottomSpacing: CGFloat) -> UIView {
+    func createLatexView(
+        latex: String,
+        width: CGFloat,
+        topSpacing: CGFloat,
+        bottomSpacing: CGFloat,
+        renderResult: LatexRenderResult? = nil
+    ) -> UIView {
         let createTime = CFAbsoluteTimeGetCurrent()
         mdLog("[STREAM] 📐 LaTeX 开始创建: \(latex.prefix(50))...")
 
@@ -420,34 +464,43 @@ extension MarkdownViewTextKit {
         // 格式: MarkdownAtomicLatex_<streamStartTime>_<createTime>
         container.accessibilityIdentifier = "MarkdownAtomicLatex_\(streamingStartTimestamp)_\(createTime)"
 
-        // ⚡️ 使用 LaTeXAttachment
+        // 静态视口路径缓存矢量解析结果；普通/流式路径仍在这里完成一次解析。
         let attachmentStart = CFAbsoluteTimeGetCurrent()
-        let attachment = LaTeXAttachment(
-            latex: latex,
-            fontSize: configuration.latexFontSize,
-            maxWidth: width - configuration.latexPadding * 2,  // 留出容器padding
-            padding: configuration.latexPadding,
-            backgroundColor: configuration.latexBackgroundColor,
-            textColor: configuration.latexTextColor,
-            appearance: configuration.latexAppearance
-        )
-        mdLog("[STREAM] 📐 LaTeXAttachment 创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - attachmentStart) * 1000))ms")
+        let resolvedResult: LatexRenderResult
+        if let renderResult {
+            resolvedResult = renderResult
+        } else if !viewportSlots.isEmpty {
+            // 列表/引用内部的公式没有独立槽位，但它们仍会随父块反复卸载。
+            // 复用解析结果，重建父块时只恢复轻量 UIView/CALayer。
+            resolvedResult = viewportLatexRenderResult(
+                latex: latex,
+                containerWidth: width
+            )
+        } else {
+            resolvedResult = LatexRenderResult.parse(
+                latex: latex,
+                fontSize: configuration.latexFontSize,
+                padding: configuration.latexPadding,
+                maxWidth: max(1, width - configuration.latexPadding * 2)
+            )
+        }
+        mdLog("[STREAM] 📐 LaTeX 解析/缓存读取耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - attachmentStart) * 1000))ms")
 
         // 直接使用已解析的 renderResult 创建公式视图，无需经过 TextKit 2 附件管线
         // （原来的做法是建一套 NSTextLayoutManager/NSTextContentStorage 再枚举片段取 ViewProvider，
         //  最终也只是拿到同一个 createScrollableView 产物，纯属冗余）
         let formulaView = LatexMathView.createScrollableView(
-            renderResult: attachment.renderResult,
-            backgroundColor: attachment.backgroundColor,
-            textColor: attachment.textColor,
-            appearance: attachment.appearance
+            renderResult: resolvedResult,
+            backgroundColor: configuration.latexBackgroundColor,
+            textColor: configuration.latexTextColor,
+            appearance: configuration.latexAppearance
         ).view
 
         formulaView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(formulaView)
 
         // Attachment 初始化时已经完成唯一一次解析和测量；正常与回退路径共享同一尺寸。
-        let formulaSize = attachment.renderResult.displaySize
+        let formulaSize = resolvedResult.displaySize
         mdLog("[STREAM] 📐 复用 LaTeX 渲染尺寸: \(formulaSize)")
 
         // 设置约束 - 根据对齐方式设置水平约束
@@ -595,8 +648,9 @@ extension MarkdownViewTextKit {
               targetHeight > 0 else { return nil }
 
         let targetSize = CGSize(width: targetWidth, height: targetHeight)
+        let heightDelta = targetHeight - heightConstraint.constant
         let sizeChanged = abs(widthConstraint.constant - targetWidth) > 0.5
-            || abs(heightConstraint.constant - targetHeight) > 0.5
+            || abs(heightDelta) > 0.5
         guard sizeChanged else { return targetSize }
 
         UIView.performWithoutAnimation {
@@ -604,9 +658,14 @@ extension MarkdownViewTextKit {
             heightConstraint.constant = targetHeight
         }
 
-        // 多张图片可能在同一帧完成。复用现有调度器只做一次压缩测高，避免每张图片
-        // 都触发整棵 Markdown 视图布局，同时清掉占位图阶段缓存的根高度。
-        scheduleHeightChangeNotification(force: true)
+        // list/quote 是垂直结构，图片约束的高度差会 1:1 传到所属 slot。直接提交
+        // 这个精确 delta，避免对已经被 slot 固定高度的根视图 fitting 出旧高度。
+        if let imageView = heightConstraint.firstItem as? UIView,
+           applyViewportDescendantHeightDelta(heightDelta, from: imageView) {
+            // slot 更新方法已经合并安排根高度通知。
+        } else {
+            scheduleHeightChangeNotification(force: true)
+        }
         return targetSize
     }
     

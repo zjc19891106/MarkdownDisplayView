@@ -9,17 +9,34 @@ import UIKit
 
 // MARK: - Layout Calculator
 
+struct MarkdownTableLayoutResult {
+    let columnWidths: [CGFloat]
+    let rowHeights: [CGFloat]
+    let totalSize: CGSize
+}
+
 struct MarkdownTableLayoutCalculator {
-    static func calculate(data: MarkdownTableData, config: MarkdownConfiguration, containerWidth: CGFloat) -> (columnWidths: [CGFloat], rowHeights: [CGFloat], totalSize: CGSize) {
+    static func calculate(
+        data: MarkdownTableData,
+        config: MarkdownConfiguration,
+        containerWidth: CGFloat
+    ) -> MarkdownTableLayoutResult {
         guard !data.headers.isEmpty || !data.rows.isEmpty else {
-            return ([], [], .zero)
+            return MarkdownTableLayoutResult(
+                columnWidths: [],
+                rowHeights: [],
+                totalSize: .zero
+            )
         }
 
         // 水平内边距（左右各 tableCellPadding）
         let horizontalPadding = config.tableCellPadding * 2
 
         // 1. Calculate Column Widths
-        let columnCount = max(data.headers.count, data.rows.first?.count ?? 0)
+        let columnCount = max(
+            data.headers.count,
+            data.rows.map(\.count).max() ?? 0
+        )
         var columnWidths: [CGFloat] = Array(repeating: config.tableMinColumnWidth, count: columnCount)
 
         // Helper to measure text width
@@ -90,7 +107,11 @@ struct MarkdownTableLayoutCalculator {
         // If table is larger, use screen width (and scroll internally).
         let frameWidth = min(totalWidth, containerWidth)
 
-        return (columnWidths, rowHeights, CGSize(width: frameWidth, height: totalHeight))
+        return MarkdownTableLayoutResult(
+            columnWidths: columnWidths,
+            rowHeights: rowHeights,
+            totalSize: CGSize(width: frameWidth, height: totalHeight)
+        )
     }
 }
 
@@ -454,6 +475,7 @@ class MarkdownTableAttachment: NSTextAttachment {
         data: MarkdownTableData,
         config: MarkdownConfiguration,
         containerWidth: CGFloat,
+        layoutResult: MarkdownTableLayoutResult? = nil,
         onLinkTap: ((URL) -> Void)? = nil
     ) {
         self.tableData = data
@@ -461,7 +483,7 @@ class MarkdownTableAttachment: NSTextAttachment {
         self.onLinkTap = onLinkTap
         
         // Pre-calculate layout
-        let result = MarkdownTableLayoutCalculator.calculate(
+        let result = layoutResult ?? MarkdownTableLayoutCalculator.calculate(
             data: data,
             config: config,
             containerWidth: containerWidth

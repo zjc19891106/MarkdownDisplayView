@@ -9,6 +9,30 @@ import UIKit
 
 // MARK: - Code Block Attachment
 
+struct CodeBlockMetrics {
+    let contentWidth: CGFloat
+    let contentHeight: CGFloat
+    let attachmentHeight: CGFloat
+
+    static func calculate(for code: NSAttributedString, padding: CGFloat = 12) -> CodeBlockMetrics {
+        let size = code.boundingRect(
+            with: CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).size
+        let contentWidth = ceil(size.width)
+        let contentHeight = ceil(size.height)
+        return CodeBlockMetrics(
+            contentWidth: contentWidth,
+            contentHeight: contentHeight,
+            attachmentHeight: contentHeight + padding * 2
+        )
+    }
+}
+
 /// 代码块附件，用于在 TextKit 2 中显示支持横向滚动的代码块
 @available(iOS 15.0, *)
 final class CodeBlockAttachment: NSTextAttachment {
@@ -41,7 +65,8 @@ final class CodeBlockAttachment: NSTextAttachment {
         code: NSAttributedString,
         configuration: MarkdownConfiguration,
         containerWidth: CGFloat,
-        language: String? = nil
+        language: String? = nil,
+        metrics: CodeBlockMetrics? = nil
     ) {
         self.code = code
         self.configuration = configuration
@@ -49,13 +74,9 @@ final class CodeBlockAttachment: NSTextAttachment {
         self.language = language
 
         // 计算代码不换行时的实际尺寸（宽度无限大，不换行）
-        let size = code.boundingRect(
-            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        ).size
-        self.contentWidth = ceil(size.width)
-        self.contentHeight = ceil(size.height)
+        let resolvedMetrics = metrics ?? CodeBlockMetrics.calculate(for: code)
+        self.contentWidth = resolvedMetrics.contentWidth
+        self.contentHeight = resolvedMetrics.contentHeight
 
         super.init(data: nil, ofType: nil)
 
@@ -63,7 +84,7 @@ final class CodeBlockAttachment: NSTextAttachment {
         self.image = UIImage()
 
         // 设置 attachment bounds：宽度 = 容器宽度，高度 = 内容高度 + 上下 padding
-        let totalHeight = self.contentHeight + padding * 2
+        let totalHeight = resolvedMetrics.attachmentHeight
         self.bounds = CGRect(origin: .zero, size: CGSize(width: containerWidth, height: totalHeight))
     }
 

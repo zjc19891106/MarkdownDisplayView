@@ -233,6 +233,398 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func complexBlocksOnlyStayMaterializedNearTheViewport() throws {
+    let viewportSize = CGSize(width: 390, height: 600)
+    let host = UIViewController()
+    host.view.frame = CGRect(origin: .zero, size: viewportSize)
+    let scrollView = ScrollableMarkdownViewTextKit(frame: host.view.bounds)
+    host.view.addSubview(scrollView)
+
+    let window = UIWindow(frame: host.view.bounds)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+
+    let body = NSAttributedString(
+        string: "复杂块内部正文",
+        attributes: [.font: UIFont.systemFont(ofSize: 17)]
+    )
+    let table = MarkdownTableData(
+        headers: [NSAttributedString(string: "列 1"), NSAttributedString(string: "列 2")],
+        rows: [[NSAttributedString(string: "A"), NSAttributedString(string: "B")]]
+    )
+    let blockPattern: [MarkdownRenderElement] = [
+        .latex("x^2 + y^2 = z^2"),
+        .table(table),
+        .codeBlock(
+            language: nil,
+            code: NSAttributedString(
+                string: "let value = Array(repeating: 1, count: 100)",
+                attributes: [.font: UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)]
+            )
+        ),
+        .list(items: [ListNodeItem(marker: "•", children: [.attributedText(body)])], level: 1),
+        .quote(children: [.attributedText(body)], level: 1),
+    ]
+    let elements = (0..<15).flatMap { _ in blockPattern }
+
+    host.view.layoutIfNeeded()
+    let markdownView = scrollView.markdownView
+    markdownView.updateViews(
+        newElements: elements,
+        footnotes: [],
+        containerWidth: viewportSize.width - 32
+    )
+    host.view.layoutIfNeeded()
+    markdownView.reconcileViewportWindow()
+
+    #expect(markdownView.viewportSlots.count == elements.count)
+    #expect(markdownView.viewportSlots.allSatisfy { $0.reuseKind == nil })
+    #expect(markdownView.viewportSlots.first?.contentView != nil)
+    #expect(markdownView.viewportSlots.last?.contentView == nil)
+
+    scrollView.setContentOffset(
+        CGPoint(x: 0, y: max(0, scrollView.contentSize.height - scrollView.bounds.height)),
+        animated: false
+    )
+    markdownView.viewportLastReconciledBounds = nil
+    host.view.layoutIfNeeded()
+    markdownView.reconcileViewportWindow()
+
+    #expect(markdownView.viewportSlots.first?.contentView == nil)
+    #expect(markdownView.viewportSlots.last?.contentView != nil)
+    #expect(markdownView.viewportSlots.filter { $0.contentView != nil }.count < elements.count)
+    #expect(markdownView.viewportReusableTextViews.values.reduce(0) { $0 + $1.count } == 0)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func complexBlockRebuildRestoresHorizontalScrollPosition() throws {
+    let markdownView = MarkdownViewTextKit()
+    let element = MarkdownRenderElement.codeBlock(
+        language: nil,
+        code: NSAttributedString(string: "a very long code line")
+    )
+    let slot = MarkdownViewportSlotView(
+        elementIndex: 0,
+        element: element,
+        estimatedHeight: 80,
+        fixedTextHeight: nil
+    )
+    slot.frame = CGRect(x: 0, y: 0, width: 300, height: 80)
+
+    func makeContent() -> (UIView, UIScrollView) {
+        let content = UIView(frame: slot.bounds)
+        let horizontal = UIScrollView(frame: CGRect(x: 0, y: 0, width: 300, height: 80))
+        horizontal.contentSize = CGSize(width: 900, height: 80)
+        content.addSubview(horizontal)
+        return (content, horizontal)
+    }
+
+    let first = makeContent()
+    slot.install(first.0, measuredHeight: 80)
+    slot.layoutIfNeeded()
+    first.1.contentOffset.x = 137
+    markdownView.captureViewportInteractionState(from: slot)
+    _ = try #require(slot.uninstall())
+
+    let rebuilt = makeContent()
+    slot.install(rebuilt.0, measuredHeight: 80)
+    slot.layoutIfNeeded()
+    markdownView.restoreViewportInteractionState(to: slot)
+
+    #expect(abs(rebuilt.1.contentOffset.x - 137) < 0.5)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func horizontalOffsetsUseStableSubviewPathsWhenScrollabilityChanges() throws {
+    let markdownView = MarkdownViewTextKit()
+    let slot = MarkdownViewportSlotView(
+        elementIndex: 0,
+        element: .quote(children: [], level: 1),
+        estimatedHeight: 80,
+        fixedTextHeight: nil
+    )
+    slot.frame = CGRect(x: 0, y: 0, width: 300, height: 80)
+
+    func makeRoot(firstIsScrollable: Bool) -> (UIView, UIScrollView, UIScrollView) {
+        let root = UIView(frame: slot.bounds)
+        let first = UIScrollView(frame: CGRect(x: 0, y: 0, width: 300, height: 40))
+        first.contentSize = CGSize(width: firstIsScrollable ? 900 : 300, height: 40)
+        let second = UIScrollView(frame: CGRect(x: 0, y: 40, width: 300, height: 40))
+        second.contentSize = CGSize(width: 900, height: 40)
+        root.addSubview(first)
+        root.addSubview(second)
+        return (root, first, second)
+    }
+
+    let original = makeRoot(firstIsScrollable: true)
+    slot.install(original.0, measuredHeight: 80)
+    slot.layoutIfNeeded()
+    original.1.contentOffset.x = 41
+    original.2.contentOffset.x = 173
+    markdownView.captureViewportInteractionState(from: slot)
+    _ = try #require(slot.uninstall())
+
+    let rebuilt = makeRoot(firstIsScrollable: false)
+    slot.install(rebuilt.0, measuredHeight: 80)
+    slot.layoutIfNeeded()
+    markdownView.restoreViewportInteractionState(to: slot)
+
+    #expect(abs(rebuilt.1.contentOffset.x) < 0.5)
+    #expect(abs(rebuilt.2.contentOffset.x - 173) < 0.5)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func recycledComplexBlockDoesNotStayRetainedByItsSlot() throws {
+    let markdownView = MarkdownViewTextKit()
+    let width: CGFloat = 358
+    markdownView.viewportContainerWidth = width
+    let element = MarkdownRenderElement.latex("x^2 + y^2")
+    let prepared = try #require(markdownView.prepareViewportBlock(
+        for: element,
+        containerWidth: width
+    ))
+    let slot = MarkdownViewportSlotView(
+        elementIndex: 0,
+        element: element,
+        estimatedHeight: 80,
+        fixedTextHeight: nil,
+        preparedBlock: prepared
+    )
+    weak var releasedContent: UIView?
+
+    autoreleasepool {
+        markdownView.mountViewportSlot(slot)
+        releasedContent = slot.contentView
+        markdownView.recycleViewportSlot(slot)
+    }
+
+    #expect(slot.contentView == nil)
+    #expect(releasedContent == nil)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func nestedImageLoadRemeasuresItsVirtualizedQuoteSlot() async throws {
+    let viewportSize = CGSize(width: 390, height: 600)
+    let host = UIViewController()
+    host.view.frame = CGRect(origin: .zero, size: viewportSize)
+    let scrollView = ScrollableMarkdownViewTextKit(frame: host.view.bounds)
+    host.view.addSubview(scrollView)
+
+    let window = UIWindow(frame: host.view.bounds)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+
+    let text = NSAttributedString(
+        string: "用于开启静态视口路径的正文",
+        attributes: [.font: UIFont.systemFont(ofSize: 17)]
+    )
+    let quote = MarkdownRenderElement.quote(
+        children: [.image(source: "https://example.invalid/image.png", altText: "占位图")],
+        level: 1
+    )
+    let elements: [MarkdownRenderElement] = [quote]
+        + (0..<6).map { _ in .attributedText(text) }
+
+    host.view.layoutIfNeeded()
+    let markdownView = scrollView.markdownView
+    markdownView.updateViews(
+        newElements: elements,
+        footnotes: [],
+        containerWidth: viewportSize.width - 32
+    )
+    host.view.layoutIfNeeded()
+
+    let quoteSlot = try #require(
+        markdownView.viewportSlots.first { $0.elementIndex == 0 }
+    )
+    let quoteContent = try #require(quoteSlot.contentView)
+    let imageView = try #require(firstSubview(of: ImageView.self, in: quoteContent))
+    let heightConstraint = try #require(imageView.constraints.first { constraint in
+        constraint.firstItem === imageView
+            && constraint.firstAttribute == .height
+            && constraint.relation == .equal
+    })
+    let widthConstraint = try #require(imageView.constraints.first { constraint in
+        constraint.firstItem === imageView
+            && constraint.firstAttribute == .width
+            && constraint.relation == .lessThanOrEqual
+    })
+    let oldHeight = quoteSlot.cachedHeight
+    let imageWidth = widthConstraint.constant
+
+    _ = markdownView.applyLoadedImageSize(
+        CGSize(width: imageWidth, height: 350),
+        maxWidth: imageWidth,
+        widthConstraint: widthConstraint,
+        heightConstraint: heightConstraint
+    )
+    try await Task.sleep(nanoseconds: 100_000_000)
+    host.view.layoutIfNeeded()
+
+    #expect(quoteSlot.cachedHeight > oldHeight + 100)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func preparedComplexBlockGeometryMatchesMaterializedViews() throws {
+    let markdownView = MarkdownViewTextKit()
+    let width: CGFloat = 358
+    markdownView.viewportContainerWidth = width
+
+    let latex = "\\frac{a+b}{c+d}"
+    let latexElement = MarkdownRenderElement.latex(latex)
+    let latexPrepared = try #require(markdownView.prepareViewportBlock(
+        for: latexElement,
+        containerWidth: width
+    ))
+    let latexSlot = MarkdownViewportSlotView(
+        elementIndex: 0,
+        element: latexElement,
+        estimatedHeight: 1,
+        fixedTextHeight: nil,
+        preparedBlock: latexPrepared
+    )
+    let latexView = markdownView.createViewportContentView(for: latexSlot)
+    let latexEstimate = markdownView.estimatedViewportSlotHeight(
+        for: latexElement,
+        containerWidth: width,
+        precalculatedTextHeight: nil,
+        preparedBlock: latexPrepared
+    )
+    let latexMeasured = markdownView.measuredViewportContentHeight(
+        latexView,
+        width: width,
+        fallback: 0
+    )
+
+    let tableData = MarkdownTableData(
+        headers: [NSAttributedString(string: "Header")],
+        rows: [[NSAttributedString(string: "Cell")]]
+    )
+    let tableElement = MarkdownRenderElement.table(tableData)
+    let tablePrepared = try #require(markdownView.prepareViewportBlock(
+        for: tableElement,
+        containerWidth: width
+    ))
+    let tableSlot = MarkdownViewportSlotView(
+        elementIndex: 1,
+        element: tableElement,
+        estimatedHeight: 1,
+        fixedTextHeight: nil,
+        preparedBlock: tablePrepared
+    )
+    let tableView = markdownView.createViewportContentView(for: tableSlot)
+    let tableEstimate = markdownView.estimatedViewportSlotHeight(
+        for: tableElement,
+        containerWidth: width,
+        precalculatedTextHeight: nil,
+        preparedBlock: tablePrepared
+    )
+    let tableMeasured = markdownView.measuredViewportContentHeight(
+        tableView,
+        width: width,
+        fallback: 0
+    )
+
+    let code = NSAttributedString(
+        string: "let answer = 42",
+        attributes: [.font: UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)]
+    )
+    let codeElement = MarkdownRenderElement.codeBlock(language: nil, code: code)
+    let codePrepared = try #require(markdownView.prepareViewportBlock(
+        for: codeElement,
+        containerWidth: width
+    ))
+    let codeSlot = MarkdownViewportSlotView(
+        elementIndex: 2,
+        element: codeElement,
+        estimatedHeight: 1,
+        fixedTextHeight: nil,
+        preparedBlock: codePrepared
+    )
+    let codeView = markdownView.createViewportContentView(for: codeSlot)
+    let codeEstimate = markdownView.estimatedViewportSlotHeight(
+        for: codeElement,
+        containerWidth: width,
+        precalculatedTextHeight: nil,
+        preparedBlock: codePrepared
+    )
+    let codeMeasured = markdownView.measuredViewportContentHeight(
+        codeView,
+        width: width,
+        fallback: 0
+    )
+
+    #expect(abs(latexEstimate - latexMeasured) <= 1)
+    #expect(abs(tableEstimate - tableMeasured) <= 1)
+    #expect(abs(codeEstimate - codeMeasured) <= 1)
+    #expect(markdownView.viewportParsedFormulaCache.count == 1)
+    #expect(markdownView.viewportLatexRenderResultCache.count == 1)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func tableLayoutUsesTheWidestMalformedRow() {
+    let markdownView = MarkdownViewTextKit()
+    let data = MarkdownTableData(
+        headers: [NSAttributedString(string: "Only header")],
+        rows: [[
+            NSAttributedString(string: "A"),
+            NSAttributedString(string: "B"),
+            NSAttributedString(string: "C"),
+        ]]
+    )
+
+    let result = MarkdownTableLayoutCalculator.calculate(
+        data: data,
+        config: markdownView.configuration,
+        containerWidth: 358
+    )
+
+    #expect(result.columnWidths.count == 3)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func compositeBlocksKeepIdentityWhenTheyContainInteractiveDetails() {
+    let markdownView = MarkdownViewTextKit()
+    let details = MarkdownRenderElement.details(
+        summary: "交互状态",
+        children: [.attributedText(NSAttributedString(string: "展开内容"))]
+    )
+    let list = MarkdownRenderElement.list(
+        items: [ListNodeItem(marker: "•", children: [details])],
+        level: 1
+    )
+    let quote = MarkdownRenderElement.quote(children: [details], level: 1)
+
+    #expect(!markdownView.isViewportVirtualizableElement(list))
+    #expect(!markdownView.isViewportVirtualizableElement(quote))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func listsWithDynamicImagesKeepTheirMarkerHeightSemantics() {
+    let markdownView = MarkdownViewTextKit()
+    let list = MarkdownRenderElement.list(
+        items: [ListNodeItem(
+            marker: "•",
+            children: [.image(source: "https://example.invalid/small.png", altText: "小图")]
+        )],
+        level: 1
+    )
+
+    #expect(!markdownView.isViewportVirtualizableElement(list))
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func viewportRerenderReusesUnchangedInteractiveBlocks() throws {
     let scrollView = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
     let markdownView = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 358, height: 600))

@@ -3,7 +3,7 @@
 //  MarkdownDisplayView
 //
 //  Keeps lightweight document geometry resident while mounting expensive
-//  text drawing views only near the enclosing scroll view's viewport.
+//  drawing views only near the enclosing scroll view's viewport.
 //
 
 import UIKit
@@ -17,14 +17,56 @@ enum MarkdownViewportReuseKind: Hashable {
 }
 
 @available(iOS 15.0, *)
+struct MarkdownViewportFormulaKey: Hashable {
+    let latex: String
+    let fontSize: CGFloat
+}
+
+@available(iOS 15.0, *)
+struct MarkdownViewportLatexResultKey: Hashable {
+    let formula: MarkdownViewportFormulaKey
+    let padding: CGFloat
+    let maxWidth: CGFloat
+}
+
+@available(iOS 15.0, *)
+struct MarkdownViewportTableLayoutKey: Hashable {
+    let headers: [NSAttributedString]
+    let rows: [[NSAttributedString]]
+    let columnAlignments: [NSTextAlignment?]
+    let containerWidth: CGFloat
+    let minColumnWidth: CGFloat
+    let maxColumnWidth: CGFloat
+    let cellPadding: CGFloat
+    let cellVerticalPadding: CGFloat
+    let rowHeight: CGFloat
+    let separatorHeight: CGFloat
+}
+
+@available(iOS 15.0, *)
+enum MarkdownViewportPreparedBlock {
+    case latex(LatexRenderResult)
+    case table(MarkdownTableLayoutResult)
+    case codeBlock(CodeBlockMetrics)
+}
+
+@available(iOS 15.0, *)
+struct MarkdownViewportPreservedSlotState {
+    let horizontalContentOffsets: [String: CGFloat]
+}
+
+@available(iOS 15.0, *)
 final class MarkdownViewportSlotView: UIView {
     let elementIndex: Int
     let element: MarkdownRenderElement
     let reuseKind: MarkdownViewportReuseKind?
     var fixedTextHeight: CGFloat?
+    var preparedBlock: MarkdownViewportPreparedBlock?
+    var horizontalContentOffsets: [String: CGFloat]
 
     private(set) var contentView: UIView?
     private(set) var cachedHeight: CGFloat
+    private(set) var hasMeasuredContentHeight = false
     private var heightConstraint: NSLayoutConstraint!
 
     init(
@@ -32,11 +74,15 @@ final class MarkdownViewportSlotView: UIView {
         element: MarkdownRenderElement,
         estimatedHeight: CGFloat,
         fixedTextHeight: CGFloat?,
+        preparedBlock: MarkdownViewportPreparedBlock? = nil,
+        horizontalContentOffsets: [String: CGFloat] = [:],
         reuseKind: MarkdownViewportReuseKind? = nil
     ) {
         self.elementIndex = elementIndex
         self.element = element
         self.fixedTextHeight = fixedTextHeight
+        self.preparedBlock = preparedBlock
+        self.horizontalContentOffsets = horizontalContentOffsets
         self.reuseKind = reuseKind
         self.cachedHeight = max(1, estimatedHeight)
         super.init(frame: .zero)
@@ -60,6 +106,7 @@ final class MarkdownViewportSlotView: UIView {
         contentView?.removeFromSuperview()
 
         cachedHeight = max(1, measuredHeight)
+        hasMeasuredContentHeight = true
         heightConstraint.constant = cachedHeight
         contentView = view
 
@@ -89,6 +136,10 @@ final class MarkdownViewportSlotView: UIView {
         heightConstraint.constant = cachedHeight
         return cachedHeight - oldHeight
     }
+
+    func invalidateMeasuredContentHeight() {
+        hasMeasuredContentHeight = false
+    }
 }
 
 @available(iOS 15.0, *)
@@ -108,8 +159,61 @@ extension MarkdownViewTextKit {
         switch element {
         case .attributedText(let text):
             return text.length > 0
-        case .heading:
+        case .heading, .latex, .table:
             return true
+        case .codeBlock(let language, _):
+            guard let language else { return true }
+            // 自定义 renderer 可能维护播放、选择或业务状态，不能按默认代码块销毁。
+            return MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: language) == nil
+        case .list(let items, _):
+            return items.allSatisfy { item in
+                item.children.allSatisfy(isViewportSafeListChild)
+            }
+        case .quote(let children, _):
+            return children.allSatisfy(isViewportSafeCompositeChild)
+        default:
+            return false
+        }
+    }
+
+    func isViewportSafeCompositeChild(_ element: MarkdownRenderElement) -> Bool {
+        switch element {
+        case .custom, .details:
+            // 这两类允许调用方持有任意交互状态；没有通用序列化协议时保留 identity。
+            return false
+        case .codeBlock(let language, _):
+            guard let language else { return true }
+            return MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: language) == nil
+        case .list(let items, _):
+            return items.allSatisfy { item in
+                item.children.allSatisfy(isViewportSafeListChild)
+            }
+        case .quote(let children, _):
+            return children.allSatisfy(isViewportSafeCompositeChild)
+        default:
+            return true
+        }
+    }
+
+    func isViewportSafeListChild(_ element: MarkdownRenderElement) -> Bool {
+        // List item 的真实高度是 max(marker, content)。异步图片缩到 marker 以下时，
+        // 裸图片 delta 不再等于 item delta；在引入 item 级状态前保留这类列表 identity。
+        guard !viewportElementHasDynamicHeight(element) else { return false }
+        return isViewportSafeCompositeChild(element)
+    }
+
+    func viewportElementHasDynamicHeight(_ element: MarkdownRenderElement) -> Bool {
+        switch element {
+        case .image:
+            return true
+        case .attributedText(let text):
+            return text.containsAttachments(in: NSRange(location: 0, length: text.length))
+        case .list(let items, _):
+            return items.contains { item in
+                item.children.contains(where: viewportElementHasDynamicHeight)
+            }
+        case .quote(let children, _):
+            return children.contains(where: viewportElementHasDynamicHeight)
         default:
             return false
         }
@@ -123,6 +227,10 @@ extension MarkdownViewTextKit {
         perfStartTime: CFAbsoluteTime,
         precalculatedTextHeights: [CGFloat?]?
     ) {
+        let preservedSlotStates = reusableViewportSlotStates(
+            for: elements,
+            containerWidth: containerWidth
+        )
         let reusableAtomicViews = reusableViewportAtomicViews(for: elements)
         teardownViewportWindow()
         contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -143,6 +251,13 @@ extension MarkdownViewTextKit {
 
         for (index, element) in elements.enumerated() {
             let precalculatedHeight = precalculatedTextHeights?[safe: index] ?? nil
+            let preservedState = preservedSlotStates[index]
+            // 每次文档提交都按当前 configuration 重建纯几何；只在同一静态
+            // snapshot 的滚动挂载之间复用，避免主题/字号变化后沿用旧尺寸。
+            let preparedBlock = prepareViewportBlock(
+                for: element,
+                containerWidth: containerWidth
+            )
             let fixedTextHeight = fixedViewportTextHeight(
                 for: element,
                 containerWidth: containerWidth,
@@ -151,7 +266,8 @@ extension MarkdownViewTextKit {
             let estimatedHeight = estimatedViewportSlotHeight(
                 for: element,
                 containerWidth: containerWidth,
-                precalculatedTextHeight: fixedTextHeight ?? precalculatedHeight
+                precalculatedTextHeight: fixedTextHeight ?? precalculatedHeight,
+                preparedBlock: preparedBlock
             )
             if isViewportVirtualizableElement(element) {
                 let slot = MarkdownViewportSlotView(
@@ -159,6 +275,8 @@ extension MarkdownViewTextKit {
                     element: element,
                     estimatedHeight: estimatedHeight,
                     fixedTextHeight: fixedTextHeight,
+                    preparedBlock: preparedBlock,
+                    horizontalContentOffsets: preservedState?.horizontalContentOffsets ?? [:],
                     reuseKind: viewportReuseKind(for: element)
                 )
                 viewportSlots.append(slot)
@@ -211,7 +329,129 @@ extension MarkdownViewTextKit {
         tocSectionView = nil
     }
 
-    /// 非虚拟原子块保持原有 UIView identity，避免 Details 展开状态、表格横向位置等丢失。
+    func reusableViewportSlotStates(
+        for newElements: [MarkdownRenderElement],
+        containerWidth: CGFloat
+    ) -> [Int: MarkdownViewportPreservedSlotState] {
+        guard abs(viewportContainerWidth - containerWidth) < 0.5 else { return [:] }
+
+        var states: [Int: MarkdownViewportPreservedSlotState] = [:]
+        for slot in viewportSlots {
+            guard let newElement = newElements[safe: slot.elementIndex],
+                  newElement == slot.element else {
+                continue
+            }
+            captureViewportInteractionState(from: slot)
+            states[slot.elementIndex] = MarkdownViewportPreservedSlotState(
+                horizontalContentOffsets: slot.horizontalContentOffsets
+            )
+        }
+        return states
+    }
+
+    func viewportLatexRenderResult(
+        latex: String,
+        containerWidth: CGFloat
+    ) -> LatexRenderResult {
+        let formulaKey = MarkdownViewportFormulaKey(
+            latex: latex,
+            fontSize: configuration.latexFontSize
+        )
+        let maxWidth = max(1, containerWidth - configuration.latexPadding * 2)
+        let resultKey = MarkdownViewportLatexResultKey(
+            formula: formulaKey,
+            padding: configuration.latexPadding,
+            maxWidth: maxWidth
+        )
+
+        if let cached = viewportLatexRenderResultCache[resultKey] {
+            return cached
+        }
+
+        let formula: ParsedFormula
+        if let cached = viewportParsedFormulaCache[formulaKey] {
+            formula = cached
+        } else {
+            formula = ParsedFormula.parse(
+                latex: latex,
+                fontSize: configuration.latexFontSize
+            )
+            viewportParsedFormulaCache[formulaKey] = formula
+        }
+
+        let result = LatexRenderResult(
+            formula: formula,
+            padding: configuration.latexPadding,
+            maxWidth: maxWidth
+        )
+        viewportLatexRenderResultCache[resultKey] = result
+        return result
+    }
+
+    func prepareViewportBlock(
+        for element: MarkdownRenderElement,
+        containerWidth: CGFloat
+    ) -> MarkdownViewportPreparedBlock? {
+        switch element {
+        case .latex(let latex):
+            return .latex(viewportLatexRenderResult(
+                latex: latex,
+                containerWidth: containerWidth
+            ))
+        case .table(let data):
+            return .table(viewportTableLayout(
+                data: data,
+                containerWidth: containerWidth
+            ))
+        case .codeBlock(let language, let code):
+            if let language,
+               MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: language) != nil {
+                return nil
+            }
+            return .codeBlock(viewportCodeBlockMetrics(for: code))
+        default:
+            return nil
+        }
+    }
+
+    func viewportTableLayout(
+        data: MarkdownTableData,
+        containerWidth: CGFloat
+    ) -> MarkdownTableLayoutResult {
+        let key = MarkdownViewportTableLayoutKey(
+            headers: data.headers,
+            rows: data.rows,
+            columnAlignments: data.columnAlignments,
+            containerWidth: containerWidth,
+            minColumnWidth: configuration.tableMinColumnWidth,
+            maxColumnWidth: configuration.tableMaxColumnWidth,
+            cellPadding: configuration.tableCellPadding,
+            cellVerticalPadding: configuration.tableCellVerticalPadding,
+            rowHeight: configuration.tableRowHeight,
+            separatorHeight: configuration.tableSeparatorHeight
+        )
+        if let cached = viewportTableLayoutCache[key] {
+            return cached
+        }
+        let result = MarkdownTableLayoutCalculator.calculate(
+            data: data,
+            config: configuration,
+            containerWidth: containerWidth
+        )
+        viewportTableLayoutCache[key] = result
+        return result
+    }
+
+    func viewportCodeBlockMetrics(for code: NSAttributedString) -> CodeBlockMetrics {
+        if let cached = viewportCodeBlockMetricsCache[code] {
+            return cached
+        }
+        let metrics = CodeBlockMetrics.calculate(for: code)
+        viewportCodeBlockMetricsCache[code] = metrics
+        return metrics
+    }
+
+    /// 非虚拟原子块保持原有 UIView identity，避免 Details、自定义扩展等交互状态丢失。
     func reusableViewportAtomicViews(
         for newElements: [MarkdownRenderElement]
     ) -> [Int: UIView] {
@@ -341,16 +581,18 @@ extension MarkdownViewTextKit {
            configureViewportTextView(reusableView, for: slot) {
             view = reusableView
         } else {
-            view = createView(
-                for: slot.element,
-                containerWidth: viewportContainerWidth,
-                precalculatedHeight: slot.fixedTextHeight
-            )
+            view = createViewportContentView(for: slot)
         }
         let measuredHeight: CGFloat
-        if slot.fixedTextHeight != nil {
+        if slot.fixedTextHeight != nil || slot.preparedBlock != nil {
             // 纯文本槽位与 TextView 使用同一份 fixedTextHeight，挂载不会改变
-            // 文档几何；避免滚动时为每个 wrapper 再跑一遍 Auto Layout fitting。
+            // 文档几何；公式/表格/默认代码也已有精确测量结果。避免滚动时
+            // 为这些 wrapper 再跑一遍 Auto Layout fitting。
+            measuredHeight = slot.cachedHeight
+        } else if slot.reuseKind == nil,
+                  slot.hasMeasuredContentHeight,
+                  !viewportElementHasDynamicHeight(slot.element) {
+            // 列表/引用首次挂载后已有真实高度；无异步图片时重建结构不会改变几何。
             measuredHeight = slot.cachedHeight
         } else {
             // 行内公式/图片的附件尺寸可能与 boundingRect 估算不同，且图片加载后
@@ -362,15 +604,116 @@ extension MarkdownViewTextKit {
             )
         }
         slot.install(view, measuredHeight: measuredHeight)
+        slot.setNeedsLayout()
+        slot.layoutIfNeeded()
+        restoreViewportInteractionState(to: slot)
+    }
+
+    func createViewportContentView(for slot: MarkdownViewportSlotView) -> UIView {
+        switch (slot.element, slot.preparedBlock) {
+        case (.latex(let latex), .latex(let result)):
+            return createLatexView(
+                latex: latex,
+                width: viewportContainerWidth,
+                topSpacing: 8,
+                bottomSpacing: 8,
+                renderResult: result
+            )
+        case (.table(let data), .table(let result)):
+            return createTableView(
+                data: data,
+                width: viewportContainerWidth,
+                layoutResult: result
+            )
+        case (.codeBlock(let language, let code), .codeBlock(let metrics)):
+            return createCodeBlockView(
+                language: language,
+                code: code,
+                width: viewportContainerWidth,
+                metrics: metrics
+            )
+        default:
+            return createView(
+                for: slot.element,
+                containerWidth: viewportContainerWidth,
+                precalculatedHeight: slot.fixedTextHeight
+            )
+        }
     }
 
     func recycleViewportSlot(_ slot: MarkdownViewportSlotView) {
+        guard slot.contentView != nil else { return }
+        captureViewportInteractionState(from: slot)
         guard let content = slot.uninstall() else { return }
-        prepareViewportContentForReuse(content)
-        guard let kind = slot.reuseKind,
-              markdownTextView(in: content) != nil else { return }
-        content.isHidden = true
-        enqueueViewportTextView(content, for: kind)
+
+        if let kind = slot.reuseKind,
+           markdownTextView(in: content) != nil {
+            prepareViewportContentForReuse(content)
+            content.isHidden = true
+            enqueueViewportTextView(content, for: kind)
+        } else {
+            // 表格、公式、代码块、列表和引用不跨元素复用 UIView。离屏后立即
+            // 释放它们的附件视图与 backing store，只保留轻量几何和交互状态。
+            prepareViewportContentForRemoval(content)
+        }
+    }
+
+    func horizontalViewportScrollViews(in root: UIView) -> [(path: String, view: UIScrollView)] {
+        var result: [(path: String, view: UIScrollView)] = []
+
+        func visit(_ view: UIView, path: String) {
+            if let scrollView = view as? UIScrollView,
+               scrollView.contentSize.width > scrollView.bounds.width + 0.5 {
+                result.append((path, scrollView))
+            }
+            for (index, subview) in view.subviews.enumerated() {
+                let childPath = path.isEmpty ? String(index) : "\(path).\(index)"
+                visit(subview, path: childPath)
+            }
+        }
+
+        visit(root, path: "root")
+        return result
+    }
+
+    func captureViewportInteractionState(from slot: MarkdownViewportSlotView) {
+        guard let content = slot.contentView else { return }
+        content.setNeedsLayout()
+        content.layoutIfNeeded()
+        slot.horizontalContentOffsets = Dictionary(
+            uniqueKeysWithValues: horizontalViewportScrollViews(in: content).map {
+                ($0.path, $0.view.contentOffset.x)
+            }
+        )
+    }
+
+    func restoreHorizontalViewportOffset(
+        _ preservedX: CGFloat,
+        to scrollView: UIScrollView
+    ) {
+        let minX = -scrollView.adjustedContentInset.left
+        let maxX = max(
+            minX,
+            scrollView.contentSize.width
+                - scrollView.bounds.width
+                + scrollView.adjustedContentInset.right
+        )
+        let x = min(max(preservedX, minX), maxX)
+        scrollView.setContentOffset(
+            CGPoint(x: x, y: scrollView.contentOffset.y),
+            animated: false
+        )
+    }
+
+    func restoreViewportInteractionState(to slot: MarkdownViewportSlotView) {
+        guard let content = slot.contentView,
+              !slot.horizontalContentOffsets.isEmpty else { return }
+
+        content.layoutIfNeeded()
+        for item in horizontalViewportScrollViews(in: content) {
+            guard let preservedX = slot.horizontalContentOffsets[item.path] else { continue }
+            restoreHorizontalViewportOffset(preservedX, to: item.view)
+        }
     }
 
     func configureViewportTextView(
@@ -475,7 +818,8 @@ extension MarkdownViewTextKit {
         for slot in viewportSlots {
             guard let content = slot.contentView else { continue }
             let oldFrame = slot.convert(slot.bounds, to: self)
-            if slot.fixedTextHeight == nil,
+            if slot.reuseKind != nil,
+               slot.fixedTextHeight == nil,
                let textView = markdownTextView(in: content) {
                 textView.applyLayout(width: viewportContainerWidth, force: true)
                 content.layoutIfNeeded()
@@ -500,6 +844,44 @@ extension MarkdownViewTextKit {
         offset.y += heightDeltaAboveViewport
         scrollView.setContentOffset(offset, animated: false)
         viewportLastReconciledBounds = nil
+    }
+
+    @discardableResult
+    func applyViewportDescendantHeightDelta(
+        _ delta: CGFloat,
+        from descendant: UIView
+    ) -> Bool {
+        guard abs(delta) > 0.5 else { return false }
+
+        var ancestor: UIView? = descendant
+        while let current = ancestor, !(current is MarkdownViewportSlotView) {
+            ancestor = current.superview
+        }
+        guard let slot = ancestor as? MarkdownViewportSlotView,
+              slot.contentView != nil else { return false }
+
+        let scrollView = viewportScrollView ?? findParentScrollView()
+        let viewport = scrollView.map { $0.convert($0.bounds, to: self) }
+        let oldFrame = slot.convert(slot.bounds, to: self)
+        let appliedDelta = slot.updateCachedHeight(slot.cachedHeight + delta)
+        contentStackView.setNeedsLayout()
+        invalidateIntrinsicHeightCache()
+        invalidateIntrinsicContentSize()
+        viewportLastReconciledBounds = nil
+        contentStackView.layoutIfNeeded()
+
+        if let scrollView,
+           let viewport,
+           oldFrame.maxY <= viewport.minY,
+           !viewportSuppressesAnchorCorrection {
+            scrollView.setNeedsLayout()
+            scrollView.layoutIfNeeded()
+            var offset = scrollView.contentOffset
+            offset.y += appliedDelta
+            scrollView.setContentOffset(offset, animated: false)
+        }
+        scheduleHeightChangeNotification(force: true)
+        return true
     }
 
     func scrollToViewportAnchorIfNeeded(
@@ -553,40 +935,52 @@ extension MarkdownViewTextKit {
         guard !viewportSlots.isEmpty, width > 0 else { return }
         viewportContainerWidth = width
         viewportLastReconciledBounds = nil
+        viewportLatexRenderResultCache.removeAll(keepingCapacity: true)
+        viewportTableLayoutCache.removeAll(keepingCapacity: true)
 
         for slot in viewportSlots {
+            slot.invalidateMeasuredContentHeight()
+            slot.preparedBlock = prepareViewportBlock(
+                for: slot.element,
+                containerWidth: width
+            )
             slot.fixedTextHeight = fixedViewportTextHeight(
                 for: slot.element,
                 containerWidth: width,
                 precalculatedTextHeight: nil
             )
+            let estimatedHeight = estimatedViewportSlotHeight(
+                for: slot.element,
+                containerWidth: width,
+                precalculatedTextHeight: slot.fixedTextHeight,
+                preparedBlock: slot.preparedBlock
+            )
             guard let content = slot.contentView else {
-                slot.updateCachedHeight(
-                    estimatedViewportSlotHeight(
-                        for: slot.element,
-                        containerWidth: width,
-                        precalculatedTextHeight: slot.fixedTextHeight
-                    )
-                )
+                slot.updateCachedHeight(estimatedHeight)
                 continue
             }
 
-            _ = configureViewportTextView(content, for: slot)
-            let height: CGFloat
-            if slot.fixedTextHeight != nil {
-                height = estimatedViewportSlotHeight(
-                    for: slot.element,
-                    containerWidth: width,
-                    precalculatedTextHeight: slot.fixedTextHeight
-                )
+            if slot.reuseKind != nil {
+                _ = configureViewportTextView(content, for: slot)
+                let height: CGFloat
+                if slot.fixedTextHeight != nil {
+                    height = estimatedHeight
+                } else {
+                    height = measuredViewportContentHeight(
+                        content,
+                        width: width,
+                        fallback: estimatedHeight
+                    )
+                }
+                slot.updateCachedHeight(height)
             } else {
-                height = measuredViewportContentHeight(
-                    content,
-                    width: width,
-                    fallback: slot.cachedHeight
-                )
+                captureViewportInteractionState(from: slot)
+                if let removed = slot.uninstall() {
+                    prepareViewportContentForRemoval(removed)
+                }
+                slot.updateCachedHeight(estimatedHeight)
+                mountViewportSlot(slot)
             }
-            slot.updateCachedHeight(height)
         }
 
         invalidateIntrinsicHeightCache()
@@ -597,7 +991,10 @@ extension MarkdownViewTextKit {
     func estimatedViewportSlotHeight(
         for element: MarkdownRenderElement,
         containerWidth: CGFloat,
-        precalculatedTextHeight: CGFloat?
+        precalculatedTextHeight: CGFloat?,
+        preparedBlock: MarkdownViewportPreparedBlock? = nil,
+        suppressTopSpacing: Bool = false,
+        suppressBottomSpacing: Bool = false
     ) -> CGFloat {
         switch element {
         case .heading(_, let attributedText):
@@ -607,8 +1004,8 @@ extension MarkdownViewTextKit {
             )
             return ceil(
                 textHeight
-                    + configuration.headingTopSpacing
-                    + configuration.headingBottomSpacing
+                    + (suppressTopSpacing ? 0 : configuration.headingTopSpacing)
+                    + (suppressBottomSpacing ? 0 : configuration.headingBottomSpacing)
             )
         case .attributedText(let attributedText):
             let isInlineSegment = attributedText.length > 0
@@ -623,9 +1020,112 @@ extension MarkdownViewTextKit {
             )
             return ceil(
                 textHeight
-                    + (isInlineSegment ? 0 : configuration.paragraphTopSpacing)
-                    + (isInlineSegment ? 0 : configuration.paragraphBottomSpacing)
+                    + (suppressTopSpacing || isInlineSegment ? 0 : configuration.paragraphTopSpacing)
+                    + (suppressBottomSpacing || isInlineSegment ? 0 : configuration.paragraphBottomSpacing)
             )
+        case .latex(let latex):
+            let result: LatexRenderResult
+            if case .latex(let prepared) = preparedBlock {
+                result = prepared
+            } else {
+                result = viewportLatexRenderResult(
+                    latex: latex,
+                    containerWidth: containerWidth
+                )
+            }
+            return ceil(
+                result.displaySize.height
+                    + (suppressTopSpacing ? 0 : 8)
+                    + (suppressBottomSpacing ? 0 : 8)
+            )
+        case .table(let data):
+            let result: MarkdownTableLayoutResult
+            if case .table(let prepared) = preparedBlock {
+                result = prepared
+            } else {
+                result = viewportTableLayout(
+                    data: data,
+                    containerWidth: containerWidth
+                )
+            }
+            return ceil(result.totalSize.height + 1)
+        case .codeBlock(let language, let code):
+            if let language,
+               MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: language) != nil {
+                return estimateElementHeight(element, containerWidth: containerWidth)
+            }
+            let metrics: CodeBlockMetrics
+            if case .codeBlock(let prepared) = preparedBlock {
+                metrics = prepared
+            } else {
+                metrics = viewportCodeBlockMetrics(for: code)
+            }
+            return ceil(metrics.attachmentHeight + 1)
+        case .quote(let children, let level):
+            let leftIndent: CGFloat = level > 1 ? 20 : 0
+            let contentPadding = configuration.blockquoteContentPadding
+            let horizontalPadding = leftIndent
+                + configuration.blockquoteBarWidth
+                + contentPadding
+                + contentPadding / 1.5
+            let contentWidth = max(1, containerWidth - horizontalPadding)
+            let childrenHeight = children.reduce(CGFloat.zero) { total, child in
+                total + estimatedViewportSlotHeight(
+                    for: child,
+                    containerWidth: contentWidth,
+                    precalculatedTextHeight: nil
+                )
+            }
+            let interItemSpacing = configuration.blockquoteContentSpacing
+                * CGFloat(max(0, children.count - 1))
+            return ceil(
+                4
+                    + configuration.blockquoteContentSpacing * 2
+                    + childrenHeight
+                    + interItemSpacing
+            )
+        case .list(let items, let level):
+            let currentIndent = level > 1 ? configuration.listIndent : 0
+            let contentMaxWidth = max(1, containerWidth - currentIndent)
+            let markerWidth = items.reduce(configuration.listMarkerMinWidth) { width, item in
+                let markerSize = (item.marker as NSString).size(
+                    withAttributes: [.font: configuration.bodyFont]
+                )
+                return max(
+                    width,
+                    ceil(markerSize.width) + configuration.listMarkerSpacing
+                )
+            }
+            let itemContentWidth = max(
+                1,
+                contentMaxWidth - markerWidth - configuration.listMarkerSpacing
+            )
+            let itemsHeight = items.reduce(CGFloat.zero) { total, item in
+                let visibleChildren = visibleListChildren(in: item)
+                let contentHeight = visibleChildren.enumerated().reduce(CGFloat.zero) {
+                    subtotal, pair in
+                    subtotal + estimatedViewportSlotHeight(
+                        for: pair.element,
+                        containerWidth: itemContentWidth,
+                        precalculatedTextHeight: nil,
+                        suppressTopSpacing: pair.offset == 0,
+                        suppressBottomSpacing: true
+                    )
+                }
+                return total + max(configuration.bodyFont.lineHeight, contentHeight)
+            }
+            let interItemSpacing = configuration.listItemSpacing
+                * CGFloat(max(0, items.count - 1))
+            return ceil(
+                resolvedListTopPadding()
+                    + itemsHeight
+                    + interItemSpacing
+                    + resolvedListBottomPadding()
+            )
+        case .image:
+            return configuration.imagePlaceholderHeight
+                + (suppressTopSpacing ? 0 : 8)
+                + (suppressBottomSpacing ? 0 : 8)
         default:
             return estimateElementHeight(element, containerWidth: containerWidth)
         }
@@ -705,6 +1205,10 @@ extension MarkdownViewTextKit {
         }
         viewportReusableTextViews.removeAll(keepingCapacity: false)
         viewportSlots.removeAll(keepingCapacity: false)
+        viewportParsedFormulaCache.removeAll(keepingCapacity: false)
+        viewportLatexRenderResultCache.removeAll(keepingCapacity: false)
+        viewportTableLayoutCache.removeAll(keepingCapacity: false)
+        viewportCodeBlockMetricsCache.removeAll(keepingCapacity: false)
         viewportContainerWidth = 0
         viewportElements.removeAll(keepingCapacity: false)
     }

@@ -229,6 +229,10 @@ public final class MarkdownViewTextKit: UIView {
     var viewportSuppressesAnchorCorrection = false
     var viewportReusableTextViews: [MarkdownViewportReuseKind: [UIView]] = [:]
     let maximumViewportReusableTextViews = 12
+    var viewportParsedFormulaCache: [MarkdownViewportFormulaKey: ParsedFormula] = [:]
+    var viewportLatexRenderResultCache: [MarkdownViewportLatexResultKey: LatexRenderResult] = [:]
+    var viewportTableLayoutCache: [MarkdownViewportTableLayoutKey: MarkdownTableLayoutResult] = [:]
+    var viewportCodeBlockMetricsCache: [NSAttributedString: CodeBlockMetrics] = [:]
 
     // ⚡️ Performance Monitoring
     var renderCosts: [String: Double] = [:]

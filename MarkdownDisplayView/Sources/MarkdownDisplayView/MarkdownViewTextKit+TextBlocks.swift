@@ -187,7 +187,7 @@ extension MarkdownViewTextKit {
         let barWidth = configuration.blockquoteBarWidth
         let contentPadding = configuration.blockquoteContentPadding
         let padding = leftIndent + barWidth + contentPadding + contentPadding / 1.5  // leftIndent + barWidth + contentLeading + contentTrailing
-        let contentWidth = max(0, width - padding)
+        let contentWidth = max(1, width - padding)
 
         // 递归创建子视图
         for child in children {
