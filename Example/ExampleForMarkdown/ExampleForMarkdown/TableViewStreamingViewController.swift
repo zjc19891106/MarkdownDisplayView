@@ -321,6 +321,8 @@ class ChatMarkdownCell: UITableViewCell {
             // 步骤4: 赋值
             // ⭐️ 修复：只有非流式状态且内容不同时才设置，避免重复渲染导致卡顿
             if !message.isStreaming && markdownView.markdown != message.content {
+                // 静态消息：一次性渲染，不保留 diff 基线以省内存
+                markdownView.retainsDiffBaseline = false
                 markdownView.markdown = message.content
             }
         }

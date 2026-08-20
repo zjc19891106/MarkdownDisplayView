@@ -575,6 +575,8 @@ final class MarkdownHistoryCell: UITableViewCell {
         representedWidth = width
         preparationIndicator.stopAnimating()
         markdownView.isHidden = false
+        // 历史消息为静态内容，一次性渲染不保留 diff 基线以省内存
+        markdownView.retainsDiffBaseline = false
         markdownView.markdown = markdown
         setNeedsLayout()
     }

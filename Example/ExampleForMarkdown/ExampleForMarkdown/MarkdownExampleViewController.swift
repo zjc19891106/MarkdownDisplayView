@@ -106,6 +106,8 @@ class MarkdownExampleViewController: UIViewController {
 
     private func loadSampleMarkdown() {
         let start = CFAbsoluteTimeGetCurrent()
+        // 静态示例文档：一次性渲染，不保留 diff 基线以省内存
+        scrollableMarkdownView.markdownView.retainsDiffBaseline = false
         scrollableMarkdownView.markdown = sampleMarkdown
 
         #if DEBUG
