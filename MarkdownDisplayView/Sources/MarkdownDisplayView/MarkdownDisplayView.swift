@@ -429,8 +429,23 @@ public final class MarkdownViewTextKit: UIView {
     }
 
     deinit {
-        // ⚡️ 取消待执行的离屏渲染任务
+        // 取消待执行的 work item，避免析构后还有异步回调进来
+        renderWorkItem?.cancel()
+        refreshWorkItem?.cancel()
+        autoScrollWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
+
+        // 停掉 RunLoop 上的重复定时器。Timer.scheduledTimer 会被 RunLoop 强持有，
+        // 视图释放后不 invalidate 会一直空转（waitingDetectionTimer 不会自失效）。
+        waitingDetectionTimer?.invalidate()
+        waitingAnimationTimer?.invalidate()
+
+        // 清空流式待处理队列，尽早释放未播完的元素/文本
+        pendingRealStreamElements.removeAll()
+        pendingSmartStreamModules.removeAll()
+
+        // 取消在途订阅（图片加载等）
+        cancellables.removeAll()
     }
 
     public convenience init(markdown: String, configuration: MarkdownConfiguration = .default) {
