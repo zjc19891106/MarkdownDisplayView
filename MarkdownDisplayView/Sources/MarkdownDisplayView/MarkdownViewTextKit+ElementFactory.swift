@@ -351,13 +351,15 @@ extension MarkdownViewTextKit {
     }
 
     func markdownTextView(in view: UIView) -> MarkdownTextViewTK2? {
+        markdownTextViews(in: view).first
+    }
+
+    func markdownTextViews(in view: UIView) -> [MarkdownTextViewTK2] {
+        var result = view.subviews.flatMap(markdownTextViews(in:))
         if let textView = view as? MarkdownTextViewTK2 {
-            return textView
+            result.insert(textView, at: 0)
         }
-        if let textView = view.subviews.first(where: { $0 is MarkdownTextViewTK2 }) as? MarkdownTextViewTK2 {
-            return textView
-        }
-        return nil
+        return result
     }
 
     func isSkippableListChildElement(_ element: MarkdownRenderElement) -> Bool {

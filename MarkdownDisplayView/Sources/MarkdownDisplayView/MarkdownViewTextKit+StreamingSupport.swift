@@ -58,6 +58,7 @@ extension MarkdownViewTextKit {
 
     /// 用于可复用场景（如 UITableViewCell）重置渲染与真实流式状态
     public func resetForReuse() {
+        teardownViewportWindow()
         renderWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
         lastPreparedContentSignature = nil

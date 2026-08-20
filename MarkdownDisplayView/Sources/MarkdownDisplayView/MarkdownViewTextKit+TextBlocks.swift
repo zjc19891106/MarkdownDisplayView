@@ -45,8 +45,52 @@ extension MarkdownViewTextKit {
 
             let container = UIView()
             container.translatesAutoresizingMaskIntoConstraints = false
-            
+
             let textView = MarkdownTextViewTK2()
+            configureTextView(
+                textView,
+                withNormalizedText: normalizedText,
+                width: width - insets.left - insets.right,
+                fixedHeight: fixedHeight
+            )
+            textView.translatesAutoresizingMaskIntoConstraints = false
+
+            container.addSubview(textView)
+
+            NSLayoutConstraint.activate([
+                textView.topAnchor.constraint(equalTo: container.topAnchor, constant: insets.top),
+                textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: insets.left),
+                textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -insets.right),
+                textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -insets.bottom),
+            ])
+
+            // 保持垂直方向的抗压缩优先级，防止被压缩
+            container.setContentHuggingPriority(.required, for: .vertical)
+            container.setContentCompressionResistancePriority(.required, for: .vertical)
+
+            return container
+        }
+
+        func configureTextView(
+            _ textView: MarkdownTextViewTK2,
+            with attributedString: NSAttributedString,
+            width: CGFloat,
+            fixedHeight: CGFloat? = nil
+        ) {
+            configureTextView(
+                textView,
+                withNormalizedText: normalizedAttributedTextForRendering(attributedString),
+                width: width,
+                fixedHeight: fixedHeight
+            )
+        }
+
+        private func configureTextView(
+            _ textView: MarkdownTextViewTK2,
+            withNormalizedText normalizedText: NSAttributedString,
+            width: CGFloat,
+            fixedHeight: CGFloat?
+        ) {
             textView.attributedText = normalizedText
             textView.typewriterTextMode = configuration.typewriterTextMode
             textView.typewriterHeightUpdateInterval = configuration.typewriterHeightUpdateInterval
@@ -61,40 +105,21 @@ extension MarkdownViewTextKit {
             textView.onImageTap = { [weak self] urlString in
                 self?.onImageTap?(urlString)
             }
-            textView.translatesAutoresizingMaskIntoConstraints = false
-            
-            // 🔥 核心修复：立即应用布局
-            // 计算文本实际可用的宽度（减去内边距）
-            let contentWidth = width - insets.left - insets.right
-            if contentWidth > 0 {
+
+            if width > 0 {
                 let useAppendTypewriter = enableTypewriterEffect
                     && configuration.typewriterTextMode == .append
                 if let fixedHeight = fixedHeight {
                     // 完整块已经解析完成，直接采用最终高度；只对普通文字使用 1pt 增长路径。
-                    textView.textContainer.size = CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
+                    textView.textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
                     textView.setFixedHeight(fixedHeight)
                 } else if useAppendTypewriter {
-                    textView.textContainer.size = CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
+                    textView.textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
                     textView.setFixedHeight(1)
                 } else {
-                    textView.applyLayout(width: contentWidth, force: true)
+                    textView.applyLayout(width: width, force: true)
                 }
             }
-            
-            container.addSubview(textView)
-            
-            NSLayoutConstraint.activate([
-                textView.topAnchor.constraint(equalTo: container.topAnchor, constant: insets.top),
-                textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: insets.left),
-                textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -insets.right),
-                textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -insets.bottom),
-            ])
-            
-            // 保持垂直方向的抗压缩优先级，防止被压缩
-            container.setContentHuggingPriority(.required, for: .vertical)
-            container.setContentCompressionResistancePriority(.required, for: .vertical)
-            
-            return container
         }
     
     func handleLinkTap(_ url: URL) {

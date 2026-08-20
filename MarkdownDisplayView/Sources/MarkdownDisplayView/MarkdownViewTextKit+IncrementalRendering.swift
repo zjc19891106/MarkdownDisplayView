@@ -112,6 +112,24 @@ extension MarkdownViewTextKit {
         // Record Parsing Time
         recordCost(for: "1. Parsing", duration: parseDuration)
 
+        if shouldUseStaticViewportWindow(for: newElements) {
+            offscreenRenderWorkItem?.cancel()
+            placeholderView?.removeFromSuperview()
+            placeholderView = nil
+            updateViewportWindowViews(
+                elements: newElements,
+                footnotes: footnotes,
+                containerWidth: containerWidth,
+                startTime: startTime,
+                perfStartTime: perfStartTime,
+                precalculatedTextHeights: precalculatedTextHeights
+            )
+            return
+        }
+
+        // 宿主或内容形态变化后恢复原有渲染路径，避免 diff 把槽位误当成内容视图复用。
+        leaveViewportWindowForLegacyRendering()
+
         // ⚡️ 首屏优化：判断是否启用分批渲染
         // 条件：非流式模式 + 元素数量 > 5（避免过少内容也分批）
         let shouldUseBatchRendering = !isStreaming && newElements.count > 5 && !isEmbeddedInReusableCell()

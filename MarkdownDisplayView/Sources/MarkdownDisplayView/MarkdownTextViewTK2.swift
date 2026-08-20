@@ -275,6 +275,21 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         // layoutAttachments 会在 applyLayout 或 layoutSubviews 中被调用
     }
 
+    /// 离开视口时主动断开正文、回调和附件视图，让 CALayer backing store 可立即回收。
+    func prepareForViewportReuse(preservingLayerContents: Bool = false) {
+        attributedText = nil
+        onLinkTap = nil
+        onImageTap = nil
+        textContainer.size = .zero
+        heightConstraint?.constant = 0
+        calculatedHeight = 0
+        lastDisplayInvalidationBoundsSize = .zero
+        invalidateIntrinsicContentSize()
+        if !preservingLayerContents {
+            layer.contents = nil
+        }
+    }
+
     /// 全量替换文本内容。所有写入都走同一个 storage，保证增量修改有确定的作用目标。
     private func setStorageContent(_ newValue: NSAttributedString?) {
         textContentStorage.performEditingTransaction {

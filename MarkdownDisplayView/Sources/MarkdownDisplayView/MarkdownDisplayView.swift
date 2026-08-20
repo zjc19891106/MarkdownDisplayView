@@ -216,6 +216,20 @@ public final class MarkdownViewTextKit: UIView {
     /// 占位视图（用于预留离屏内容空间，避免布局跳动）
     var placeholderView: UIView?
 
+    // 静态长文档只保留轻量槽位；昂贵的正文/标题绘制视图按视口装载。
+    var viewportSlots: [MarkdownViewportSlotView] = []
+    weak var viewportScrollView: UIScrollView?
+    var viewportScrollObservation: NSKeyValueObservation?
+    var viewportReconcileScheduled = false
+    var viewportWindowGeneration = 0
+    var viewportContainerWidth: CGFloat = 0
+    var viewportLastReconciledBounds: CGRect?
+    var viewportElements: [MarkdownRenderElement] = []
+    var viewportAnchorAnimationGeneration = 0
+    var viewportSuppressesAnchorCorrection = false
+    var viewportReusableTextViews: [MarkdownViewportReuseKind: [UIView]] = [:]
+    let maximumViewportReusableTextViews = 12
+
     // ⚡️ Performance Monitoring
     var renderCosts: [String: Double] = [:]
     /// 记录渲染开始时间（从设置 markdown 属性开始）
@@ -434,6 +448,7 @@ public final class MarkdownViewTextKit: UIView {
         refreshWorkItem?.cancel()
         autoScrollWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
+        viewportScrollObservation?.invalidate()
 
         // 停掉 RunLoop 上的重复定时器。Timer.scheduledTimer 会被 RunLoop 强持有，
         // 视图释放后不 invalidate 会一直空转（waitingDetectionTimer 不会自失效）。
@@ -479,7 +494,11 @@ public final class MarkdownViewTextKit: UIView {
         let targetY = max(0, frame.origin.y - 12)
         let maxY = max(0, sv.contentSize.height - sv.bounds.height + sv.contentInset.bottom)
 
-        sv.setContentOffset(CGPoint(x: 0, y: min(targetY, maxY)), animated: true)
+        scrollToViewportAnchorIfNeeded(
+            view,
+            in: sv,
+            targetY: min(targetY, maxY)
+        )
     }
 
     /// 查找父级 ScrollView（用于滚动位置补偿等）
@@ -526,7 +545,7 @@ public final class MarkdownViewTextKit: UIView {
         let maxY = max(0, sv.contentSize.height - sv.bounds.height + sv.contentInset.bottom)
         let clampedY = min(max(0, targetY), maxY)
         
-        sv.setContentOffset(CGPoint(x: 0, y: clampedY), animated: true)
+        scrollToViewportAnchorIfNeeded(view, in: sv, targetY: clampedY)
     }
     
     /// 手动播放视图的打字机动画（例如用于目录 TOC）

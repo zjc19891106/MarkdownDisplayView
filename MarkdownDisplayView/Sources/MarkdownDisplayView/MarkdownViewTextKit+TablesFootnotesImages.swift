@@ -369,12 +369,12 @@ extension MarkdownViewTextKit {
     
     func refreshTextViews() {
         for container in contentStackView.arrangedSubviews {
-            for childView in container.subviews {
-                if let textView = childView as? MarkdownTextViewTK2 {
-                    textView.setNeedsDisplay()
-                }
+            for textView in markdownTextViews(in: container) {
+                textView.setNeedsDisplay()
             }
         }
+
+        remeasureMountedViewportSlots()
         
         invalidateIntrinsicContentSize()
         notifyHeightChange()
@@ -731,9 +731,13 @@ extension MarkdownViewTextKit {
 
         // layoutSubviews 也会由高度回调和 UITableView batch update 触发。只在测量宽度
         // 真正变化时重新测高，切断 notify → table layout → layoutSubviews → notify 的反馈环。
-        if consumeLayoutWidthChange(bounds.width) {
+        let widthChanged = consumeLayoutWidthChange(bounds.width)
+        if widthChanged {
+            relayoutViewportSlotsForWidthChange(to: bounds.width)
             scheduleHeightChangeNotification(force: true)
         }
+        refreshViewportObservationIfNeeded()
+        scheduleViewportReconcile()
     }
 
     func consumeLayoutWidthChange(_ width: CGFloat) -> Bool {

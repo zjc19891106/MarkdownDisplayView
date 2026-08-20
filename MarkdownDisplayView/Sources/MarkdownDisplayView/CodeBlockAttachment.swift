@@ -35,7 +35,7 @@ final class CodeBlockAttachment: NSTextAttachment {
     private let padding: CGFloat = 12
 
     /// 缓存的 ViewProvider
-    private var cachedViewProvider: CodeBlockAttachmentViewProvider?
+    private weak var cachedViewProvider: CodeBlockAttachmentViewProvider?
 
     init(
         code: NSAttributedString,

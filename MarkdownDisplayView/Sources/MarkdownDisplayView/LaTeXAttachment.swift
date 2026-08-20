@@ -42,7 +42,7 @@ public final class LaTeXAttachment: NSTextAttachment {
     let inlineCapHeight: CGFloat
 
     /// 缓存的 ViewProvider 实例（避免重复创建）
-    private var cachedViewProvider: LaTeXAttachmentViewProvider?
+    private weak var cachedViewProvider: LaTeXAttachmentViewProvider?
 
     /// 初始化 LaTeX 附件
     /// - Parameters:
