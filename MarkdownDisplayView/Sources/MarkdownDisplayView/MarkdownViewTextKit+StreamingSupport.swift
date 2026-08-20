@@ -105,6 +105,7 @@ extension MarkdownViewTextKit {
         lastLayoutWidthForHeightMeasurement = 0
 
         oldElements = []
+        retainsDiffBaseline = true
         headingViews.removeAll()
         tocSectionView = nil
         tocSectionId = nil

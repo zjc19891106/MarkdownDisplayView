@@ -137,6 +137,8 @@ public final class MarkdownViewTextKit: UIView {
         }
         print("[MarkdownTable] setPreparedContent RENDER \(signature)")
         resetForReuse()
+        // 预渲染内容通常是一次性静态展示，不保留 diff 基线以省内存（不重复持有整份富文本）
+        retainsDiffBaseline = false
         lastPreparedContentSignature = signature
 
         renderStartTime = CFAbsoluteTimeGetCurrent()
@@ -182,6 +184,9 @@ public final class MarkdownViewTextKit: UIView {
 
     var headingViews: [String: UIView] = [:]
     var oldElements: [MarkdownRenderElement] = []
+    /// 是否保留 oldElements 作为下一次全量渲染的 diff 基线。
+    /// 静态一次性渲染可置 false 以省内存，代价是下一次重渲染不再复用旧视图。
+    public var retainsDiffBaseline = true
 
     // 异步渲染队列（串行，避免并发渲染）
     let renderQueue = DispatchQueue(label: "com.markdown.render", qos: .userInitiated)

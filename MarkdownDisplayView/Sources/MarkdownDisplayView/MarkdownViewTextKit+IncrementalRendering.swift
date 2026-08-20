@@ -293,8 +293,8 @@ extension MarkdownViewTextKit {
                     newlyAddedViews.forEach { $0.alpha = 1 }
                 }
 
-                // 更新 oldElements 为完整元素列表
-                self.oldElements = newElements
+                // 更新 oldElements 为完整元素列表（静态一次性渲染不保留）
+                self.oldElements = self.retainsDiffBaseline ? newElements : []
 
                 // 处理脚注
                 if !footnotes.isEmpty {
@@ -633,7 +633,8 @@ extension MarkdownViewTextKit {
     }
 
     func finishUpdate(newElements: [MarkdownRenderElement], startTime: Double, isBatchFirstScreen: Bool, perfStartTime: CFAbsoluteTime) {
-        oldElements = newElements
+        // 静态一次性渲染（retainsDiffBaseline == false）不保留 diff 基线，避免整份富文本被 oldElements 重复持有
+        oldElements = retainsDiffBaseline ? newElements : []
 
         // ⚡️ 首屏优化：首屏阶段跳过耗时操作，等离屏渲染完成后再执行
         if !isBatchFirstScreen {
