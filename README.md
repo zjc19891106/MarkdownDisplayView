@@ -827,6 +827,16 @@ markdownView.setPreparedContent(preparedContent)
 
 ## Changelog
 
+### 2.1.8 (2026-08-20)
+
+- 🪟 **Viewport Virtualization for Static Documents** - Long static documents no longer create every root text layer up front. Lightweight geometry slots, bounded TextKit host reuse, accurate attachment measurement, and viewport-aware lifecycle hooks keep only the visible views' backing stores resident and release offscreen ones, so scrolling does not accumulate memory. Streaming and reusable-cell rendering keep their existing paths.
+- 🧱 **Bounded Backing-Store Budget for Complex Blocks** - The viewport virtualization now also covers LaTeX formulas, tables, default code blocks, and safe list/quote composites: offscreen complex views' CALayer backing stores are released while measured geometry and horizontal interaction state are preserved. Custom renderers, details blocks, and lists with dynamically sized images retain view identity (state cannot yet be reconstructed generically).
+- 📉 **Redundant Full-Text Copies Removed** - Real streaming no longer keeps a duplicate full-text string; the stream buffer is the single source of the accumulated text and is released when streaming ends.
+- 🧹 **Complete deinit Cleanup** - The view now invalidates run-loop timers and display links, cancels pending work items, clears pending streaming queues, and cancels in-flight subscriptions on dealloc, so closing a page no longer leaves timers spinning or queues holding unplayed content.
+- 🧱 **Optional Diff-Baseline Release** - `retainsDiffBaseline` lets static one-shot renders (e.g. `setPreparedContent`) skip retaining the full element list, avoiding a duplicate attributed-text copy; static demo pages opt in.
+- ⚡ **Faster Block LaTeX Rendering** - Block formulas are created directly from the parsed render result, dropping the redundant per-formula TextKit 2 layout pipeline.
+- 🐛 **AI Chat URLSession Retain Cycle Fixed** - The chat stream session now invalidates its `URLSession` on completion and in `deinit`, so each finished chat no longer leaks a session pair.
+
 ### 2.1.2 (2026-08-19)
 
 - ➗ **Inline LaTeX in Every Inline Context** - Inline `$...$` now renders as an inline attachment inside paragraphs, headings, table cells, blockquotes, and list items; display `$$...$$` stays block-level. Oversized inline formulas scale to fit the line width instead of being clipped.
