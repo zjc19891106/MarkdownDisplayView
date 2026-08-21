@@ -4,6 +4,14 @@
 
 A UIKit Markdown renderer for iOS built on TextKit 2, with configurable styles, background parsing, incremental UI updates, and real-time AI/SSE streaming.
 
+- A 16 KB sample document (covering most styles) loads and scrolls in ~60–70 MB on an iPhone 14 Pro.
+
+- The same 16 KB document streamed in random-length chunks peaks around 140 MB; memory drops back to ~70 MB after streaming stops, and more deltas can keep being appended.
+
+- History documents keep only the visible + adjacent screens of layers; memory drops while scrolling, ending around 50 MB.
+
+- After 4 rounds of real AI chat, memory stays around 40 MB; it drops on scroll, rises slightly while the model streams, and falls again once streaming completes and the message becomes static.
+
 > 🚀 **Designed for AI chat and document screens: render complete Markdown or append live AI/SSE deltas with configurable styling, typewriter output, and haptic feedback.**
 
 ## Contents
