@@ -13,3 +13,4 @@ Example/ExampleForMarkdown/ExampleForMarkdown/Config.local.json
 /.code-abyss
 /cpu.trace
 /.build-inline-review
+/MemoryStatics.trace

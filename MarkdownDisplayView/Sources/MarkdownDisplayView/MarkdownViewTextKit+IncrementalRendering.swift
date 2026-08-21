@@ -448,7 +448,9 @@ extension MarkdownViewTextKit {
             return 56  // 40pt 按钮 + 16pt 上下间距
 
         case .rawHTML:
-            return 100
+            // raw HTML 当前不生成可见内容，与 createView(.rawHTML) 的零高实现保持一致。
+            // 否则嵌套在 list/quote 的离屏槽位会长期高估，滚到附近才突然回缩。
+            return 0
 
         case .custom(let data):
             // 自定义元素：尝试从 ViewProvider 获取尺寸

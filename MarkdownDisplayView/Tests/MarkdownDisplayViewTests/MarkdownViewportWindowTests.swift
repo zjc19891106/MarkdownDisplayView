@@ -2,6 +2,23 @@ import Testing
 import UIKit
 @testable import MarkdownDisplayView
 
+private final class FixedIntrinsicHeightView: UIView {
+    private let fixedHeight: CGFloat
+
+    init(height: CGFloat) {
+        fixedHeight = height
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: UIView.noIntrinsicMetric, height: fixedHeight)
+    }
+}
+
 @available(iOS 15.0, *)
 @MainActor
 @Test func viewportSlotKeepsDocumentGeometryAfterContentIsRemoved() throws {
@@ -161,7 +178,7 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
-@Test func viewportOptimizationDoesNotReplaceStreamingOrReusableCellRendering() {
+@Test func reusableCellViewportRequiresPreparedLongContentAndExplicitOptIn() {
     let elements = (0..<8).map {
         MarkdownRenderElement.attributedText(NSAttributedString(string: "paragraph \($0)"))
     }
@@ -179,6 +196,87 @@ import UIKit
     cell.contentView.addSubview(markdownView)
     scrollView.addSubview(cell)
     #expect(!markdownView.shouldUseStaticViewportWindow(for: elements))
+
+    markdownView.allowsStaticViewportRenderingInReusableCell = true
+    #expect(!markdownView.shouldUseStaticViewportWindow(for: elements))
+
+    markdownView.isDisplayingPreparedStaticContent = true
+    markdownView.preparedStaticEstimatedHeight = 1_799
+    #expect(!markdownView.shouldUseStaticViewportWindow(for: elements))
+
+    markdownView.preparedStaticEstimatedHeight = 2_400
+    #expect(markdownView.shouldUseStaticViewportWindow(for: elements))
+
+    markdownView.isStreaming = true
+    #expect(!markdownView.shouldUseStaticViewportWindow(for: elements))
+
+    markdownView.isStreaming = false
+    markdownView.resetForReuse()
+    #expect(markdownView.allowsStaticViewportRenderingInReusableCell)
+    #expect(!markdownView.isDisplayingPreparedStaticContent)
+    #expect(!markdownView.shouldUseStaticViewportWindow(for: elements))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func completedStreamPromotionPreservesVisibleRootsAndReleasesDistantRoots() throws {
+    let viewportSize = CGSize(width: 390, height: 600)
+    let documentHeight: CGFloat = 4_000
+    let host = UIViewController()
+    host.view.frame = CGRect(origin: .zero, size: viewportSize)
+
+    let scrollView = UIScrollView(frame: host.view.bounds)
+    scrollView.contentSize = CGSize(width: viewportSize.width, height: documentHeight)
+    host.view.addSubview(scrollView)
+
+    let markdownView = MarkdownViewTextKit(frame: CGRect(
+        x: 0,
+        y: 0,
+        width: viewportSize.width,
+        height: documentHeight
+    ))
+    scrollView.addSubview(markdownView)
+
+    let elements = (0..<20).map { index in
+        let body = Array(repeating: "root \(index) keeps verified stream geometry ", count: 18).joined()
+        return MarkdownRenderElement.attributedText(NSAttributedString(string: body))
+    }
+    var originalRoots: [UIView] = []
+    for index in elements.indices {
+        let root = FixedIntrinsicHeightView(height: 200)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        root.tag = 1000 + index
+        markdownView.contentStackView.addArrangedSubview(root)
+        originalRoots.append(root)
+    }
+    markdownView.realStreamHeightAccumulator.synchronize(totalHeight: documentHeight)
+
+    let window = UIWindow(frame: host.view.bounds)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+
+    scrollView.contentOffset = .zero
+    host.view.layoutIfNeeded()
+    markdownView.layoutIfNeeded()
+    markdownView.contentStackView.layoutIfNeeded()
+
+    let visibleRoot = originalRoots[0]
+    let promoted = markdownView.promoteCompletedStreamToViewportWindow(
+        elements: elements,
+        footnotes: [],
+        containerWidth: viewportSize.width
+    )
+
+    #expect(promoted)
+    #expect(markdownView.viewportSlots.count == elements.count)
+    #expect(markdownView.viewportSlots[0].contentView === visibleRoot)
+    #expect(markdownView.viewportSlots.last?.contentView == nil)
+    #expect(markdownView.viewportSlots.allSatisfy { abs($0.cachedHeight - 200) < 0.5 })
+    #expect(abs(markdownView.viewportSlots.reduce(0) { $0 + $1.cachedHeight } - documentHeight) < 0.5)
+    #expect(markdownView.viewportElements == elements)
+    #expect(markdownView.oldElements.isEmpty)
+    #expect(markdownView.isDisplayingPreparedStaticContent)
 }
 
 @available(iOS 15.0, *)
@@ -621,6 +719,20 @@ import UIKit
     )
 
     #expect(!markdownView.isViewportVirtualizableElement(list))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func rawHTMLEstimateMatchesItsCurrentZeroHeightRenderer() {
+    let markdownView = MarkdownViewTextKit()
+    let element = MarkdownRenderElement.rawHTML("<span>unsupported</span>")
+
+    #expect(markdownView.estimateElementHeight(element, containerWidth: 358) == 0)
+    #expect(markdownView.estimatedViewportSlotHeight(
+        for: element,
+        containerWidth: 358,
+        precalculatedTextHeight: nil
+    ) == 0)
 }
 
 @available(iOS 15.0, *)

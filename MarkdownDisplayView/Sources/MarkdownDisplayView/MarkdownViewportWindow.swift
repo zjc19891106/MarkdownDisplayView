@@ -76,6 +76,7 @@ final class MarkdownViewportSlotView: UIView {
         fixedTextHeight: CGFloat?,
         preparedBlock: MarkdownViewportPreparedBlock? = nil,
         horizontalContentOffsets: [String: CGFloat] = [:],
+        hasMeasuredContentHeight: Bool = false,
         reuseKind: MarkdownViewportReuseKind? = nil
     ) {
         self.elementIndex = elementIndex
@@ -85,6 +86,7 @@ final class MarkdownViewportSlotView: UIView {
         self.horizontalContentOffsets = horizontalContentOffsets
         self.reuseKind = reuseKind
         self.cachedHeight = max(1, estimatedHeight)
+        self.hasMeasuredContentHeight = hasMeasuredContentHeight
         super.init(frame: .zero)
 
         translatesAutoresizingMaskIntoConstraints = false
@@ -145,14 +147,54 @@ final class MarkdownViewportSlotView: UIView {
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
     func shouldUseStaticViewportWindow(for elements: [MarkdownRenderElement]) -> Bool {
+        let embeddedInReusableCell = isEmbeddedInReusableCell()
+        guard let hostScrollView = viewportHostScrollView() else { return false }
         guard !isStreaming,
               !isRealStreamingMode,
               elements.count > 5,
-              !isEmbeddedInReusableCell(),
-              findParentScrollView() != nil else {
+              !embeddedInReusableCell || (
+                allowsStaticViewportRenderingInReusableCell
+                    && isDisplayingPreparedStaticContent
+                    && reusableCellDocumentExceedsViewportThreshold(in: hostScrollView)
+              ) else {
             return false
         }
         return elements.contains(where: isViewportVirtualizableElement)
+    }
+
+    /// 视口窗口应该观察承载文档的纵向滚动宿主。Cell 内优先返回
+    /// UITableView / UICollectionView，避免将表格或代码块的横向滚动视图
+    /// 误当成文档视口。
+    func viewportHostScrollView() -> UIScrollView? {
+        var nearestScrollView: UIScrollView?
+        var crossedReusableCellBoundary = false
+        var superview = superview
+        while let current = superview {
+            if current is UITableViewCell || current is UICollectionViewCell {
+                crossedReusableCellBoundary = true
+            }
+            // ScrollableMarkdownViewTextKit 或业务自己的纵向 scroll view 若位于
+            // MarkdownView 与 Cell 之间，它才是直接文档视口。
+            if !crossedReusableCellBoundary, let scrollView = current as? UIScrollView {
+                return scrollView
+            }
+            if let tableView = current as? UITableView { return tableView }
+            if let collectionView = current as? UICollectionView { return collectionView }
+            if nearestScrollView == nil, let scrollView = current as? UIScrollView {
+                nearestScrollView = scrollView
+            }
+            superview = current.superview
+        }
+        return nearestScrollView
+    }
+
+    func reusableCellDocumentExceedsViewportThreshold(in scrollView: UIScrollView) -> Bool {
+        guard let estimatedHeight = preparedStaticEstimatedHeight,
+              estimatedHeight.isFinite else { return false }
+        // loadRect 本身覆盖当前屏前后各一屏。文档不足三屏时几乎无法
+        // 回收内容，启用槽位与 KVO 只会增加 CPU 和对象数。
+        let minimumHeight = max(1_800, max(1, scrollView.bounds.height) * 3)
+        return estimatedHeight >= minimumHeight
     }
 
     func isViewportVirtualizableElement(_ element: MarkdownRenderElement) -> Bool {
@@ -238,15 +280,34 @@ extension MarkdownViewTextKit {
         tocSectionView = nil
 
         viewportContainerWidth = containerWidth
+        lastLayoutWidthForHeightMeasurement = containerWidth
         viewportWindowGeneration += 1
 
+        let hostScrollView = viewportHostScrollView()
         let viewportHeight = max(
             UIScreen.main.bounds.height,
-            findParentScrollView()?.bounds.height ?? 0
+            hostScrollView?.bounds.height ?? 0
         )
-        // 首屏只预热当前屏 + 下一屏。后续内容由固定视图池循环承载，避免
-        // 一开始就为 3 屏正文分配 CALayer backing store。
-        let initialMaterializedHeight = viewportHeight * 2
+        // 普通长文从顶部预热两屏；Cell 可能被恢复到一条超高消息的中部，
+        // 此时直接预热 table 当前视口附近，避免先分配文档顶部 backing
+        // 并在下一帧才补齐当前内容。
+        let fallbackInitialLoadRect = CGRect(
+            x: 0,
+            y: 0,
+            width: containerWidth,
+            height: viewportHeight * 2
+        )
+        let initialLoadRect: CGRect
+        if isEmbeddedInReusableCell(),
+           window != nil,
+           let hostScrollView {
+            let visibleRect = hostScrollView.convert(hostScrollView.bounds, to: self)
+            initialLoadRect = visibleRect.height > 0
+                ? visibleRect.insetBy(dx: 0, dy: -visibleRect.height)
+                : fallbackInitialLoadRect
+        } else {
+            initialLoadRect = fallbackInitialLoadRect
+        }
         var estimatedDocumentY: CGFloat = 0
 
         for (index, element) in elements.enumerated() {
@@ -287,7 +348,13 @@ extension MarkdownViewTextKit {
                     if id == tocSectionId { tocSectionView = slot }
                 }
 
-                if estimatedDocumentY <= initialMaterializedHeight {
+                let estimatedFrame = CGRect(
+                    x: 0,
+                    y: estimatedDocumentY,
+                    width: containerWidth,
+                    height: slot.cachedHeight
+                )
+                if estimatedFrame.intersects(initialLoadRect) {
                     mountViewportSlot(slot)
                 }
                 estimatedDocumentY += slot.cachedHeight
@@ -311,13 +378,238 @@ extension MarkdownViewTextKit {
         notifyHeightChange(force: true)
 
         refreshViewportObservationIfNeeded()
-        scheduleViewportReconcile()
+        if isEmbeddedInReusableCell(), window != nil {
+            // Cell 可在非顶部位置被恢复或批量更新后重建。同步对齐一次
+            // 真实 table viewport，避免一帧空白；正常滚动仍由异步 reconcile 节流。
+            layoutIfNeeded()
+            contentStackView.layoutIfNeeded()
+            viewportLastReconciledBounds = nil
+            reconcileViewportWindow()
+        } else {
+            scheduleViewportReconcile()
+        }
 
         if perfStartTime > 0 {
             let firstFrameTime = (CFAbsoluteTimeGetCurrent() - perfStartTime) * 1000
             let renderTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
             mdLog("[Viewport] first frame: \(String(format: "%.1f", firstFrameTime))ms, render: \(String(format: "%.1f", renderTime))ms, slots=\(viewportSlots.count)")
         }
+    }
+
+    /// 真流式完全 drain 后，将已经正确显示的整棵视图树原地收敛为静态
+    /// viewport slots。当前视口附近的 root view 直接换父视图，保留 TextKit /
+    /// CALayer identity；离屏 root 立即释放或收入有界文本池。
+    ///
+    /// - Returns: 是否执行了 promotion。短内容、未 opt-in 的 Cell 继续保持原流式 UI。
+    @discardableResult
+    func promoteCompletedStreamToViewportWindow(
+        elements: [MarkdownRenderElement],
+        footnotes: [MarkdownFootnote],
+        containerWidth: CGFloat
+    ) -> Bool {
+        guard elements.count > 5,
+              elements.contains(where: isViewportVirtualizableElement),
+              let hostScrollView = viewportHostScrollView() else { return false }
+
+        contentStackView.setNeedsLayout()
+        contentStackView.layoutIfNeeded()
+        let structuralHeight = max(
+            realStreamHeightAccumulator.totalHeight,
+            contentStackView.bounds.height,
+            contentStackView.arrangedSubviews.reduce(CGFloat.zero) {
+                $0 + max($1.frame.height, $1.bounds.height)
+            }
+        )
+        let minimumHeight = max(1_800, max(1, hostScrollView.bounds.height) * 3)
+        if isEmbeddedInReusableCell() {
+            guard allowsStaticViewportRenderingInReusableCell,
+                  structuralHeight >= minimumHeight else { return false }
+        } else {
+            guard structuralHeight >= minimumHeight else { return false }
+        }
+
+        let existingRoots = contentStackView.arrangedSubviews
+        var rootsByIndex: [Int: UIView] = [:]
+        for root in existingRoots {
+            let index = root.tag - 1000
+            guard elements.indices.contains(index) else { continue }
+            rootsByIndex[index] = root
+        }
+
+        let viewport = hostScrollView.convert(hostScrollView.bounds, to: self)
+        let keepRect = viewport.height > 0
+            ? viewport.insetBy(dx: 0, dy: -viewport.height * 1.5)
+            : CGRect(x: 0, y: 0, width: containerWidth, height: minimumHeight)
+        var captured: [Int: (view: UIView, frame: CGRect, height: CGFloat)] = [:]
+        var fallbackDocumentY: CGFloat = 0
+        for index in elements.indices {
+            guard let root = rootsByIndex[index] else { continue }
+            root.isHidden = false
+            root.alpha = 1
+            root.setNeedsLayout()
+            root.layoutIfNeeded()
+            let laidOutFrame = root.convert(root.bounds, to: self)
+            let fallback = estimatedViewportSlotHeight(
+                for: elements[index],
+                containerWidth: containerWidth,
+                precalculatedTextHeight: nil
+            )
+            let height: CGFloat
+            if laidOutFrame.height.isFinite, laidOutFrame.height > 0.5 {
+                height = laidOutFrame.height
+            } else {
+                height = measuredViewportContentHeight(
+                    root,
+                    width: containerWidth,
+                    fallback: fallback
+                )
+            }
+            let verifiedHeight = max(1, height)
+            let frame: CGRect
+            if laidOutFrame.height > 0.5 {
+                frame = laidOutFrame
+                fallbackDocumentY = laidOutFrame.maxY
+            } else {
+                // Self-sizing Cell 在 batch update 的过渡帧可能已有最终高度约束，
+                // 但 root frame 尚未提交。按流式顺序累加已验证高度，仍能正确
+                // 判断当前 table viewport，避免将可见 root 误回收造成空白。
+                frame = CGRect(
+                    x: 0,
+                    y: fallbackDocumentY,
+                    width: containerWidth,
+                    height: verifiedHeight
+                )
+                fallbackDocumentY = frame.maxY
+            }
+            captured[index] = (root, frame, verifiedHeight)
+        }
+
+        let oldSuppressesAnchorCorrection = viewportSuppressesAnchorCorrection
+        viewportSuppressesAnchorCorrection = true
+        defer { viewportSuppressesAnchorCorrection = oldSuppressesAnchorCorrection }
+
+        teardownViewportWindow()
+        existingRoots.forEach { $0.removeFromSuperview() }
+        headingViews.removeAll(keepingCapacity: true)
+        tocSectionView = nil
+        viewportContainerWidth = containerWidth
+        lastLayoutWidthForHeightMeasurement = containerWidth
+        viewportWindowGeneration += 1
+
+        var retainedRootIDs = Set<ObjectIdentifier>()
+        UIView.performWithoutAnimation {
+            for (index, element) in elements.enumerated() {
+                let existing = captured[index]
+                let verifiedHeight = existing?.height ?? estimatedViewportSlotHeight(
+                    for: element,
+                    containerWidth: containerWidth,
+                    precalculatedTextHeight: nil
+                )
+
+                if isViewportVirtualizableElement(element) {
+                    let fixedTextHeight = completedStreamFixedTextHeight(
+                        for: element,
+                        existingRoot: existing?.view,
+                        containerWidth: containerWidth
+                    )
+                    let slot = MarkdownViewportSlotView(
+                        elementIndex: index,
+                        element: element,
+                        estimatedHeight: verifiedHeight,
+                        fixedTextHeight: fixedTextHeight,
+                        hasMeasuredContentHeight: existing != nil,
+                        reuseKind: viewportReuseKind(for: element)
+                    )
+                    viewportSlots.append(slot)
+                    contentStackView.addArrangedSubview(slot)
+
+                    if case .heading(let id, _) = element {
+                        headingViews[id] = slot
+                        if id == tocSectionId { tocSectionView = slot }
+                    }
+
+                    guard let existing else { continue }
+                    retainedRootIDs.insert(ObjectIdentifier(existing.view))
+                    if existing.frame.intersects(keepRect) {
+                        slot.install(existing.view, measuredHeight: verifiedHeight)
+                    } else if let kind = slot.reuseKind,
+                              markdownTextView(in: existing.view) != nil {
+                        prepareViewportContentForReuse(existing.view)
+                        existing.view.isHidden = true
+                        enqueueViewportTextView(existing.view, for: kind)
+                    } else {
+                        prepareViewportContentForRemoval(existing.view)
+                    }
+                } else {
+                    let view = existing?.view ?? createView(
+                        for: element,
+                        containerWidth: containerWidth
+                    )
+                    retainedRootIDs.insert(ObjectIdentifier(view))
+                    contentStackView.addArrangedSubview(view)
+                    if case .heading(let id, _) = element {
+                        headingViews[id] = view
+                        if id == tocSectionId { tocSectionView = view }
+                    }
+                }
+            }
+        }
+
+        // 异常重复流式 element 或旧等待视图不应被新槽位间接保留。
+        for root in existingRoots where !retainedRootIDs.contains(ObjectIdentifier(root)) {
+            prepareViewportContentForRemoval(root)
+        }
+
+        trimViewportTextViewPool()
+        oldElements.removeAll(keepingCapacity: false)
+        viewportElements = elements
+        isDisplayingPreparedStaticContent = true
+        preparedStaticEstimatedHeight = structuralHeight
+        updateFootnotes(footnotes, width: containerWidth, newElementCount: elements.count)
+        loadImages()
+        invalidateIntrinsicHeightCache()
+        invalidateIntrinsicContentSize()
+        contentStackView.setNeedsLayout()
+        contentStackView.layoutIfNeeded()
+        preparedStaticEstimatedHeight = max(
+            structuralHeight,
+            contentStackView.systemLayoutSizeFitting(
+                CGSize(width: containerWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        )
+
+        refreshViewportObservationIfNeeded()
+        viewportLastReconciledBounds = nil
+        reconcileViewportWindow()
+        mdLog("[Viewport] promoted completed stream: elements=\(elements.count), slots=\(viewportSlots.count)")
+        return true
+    }
+
+    func completedStreamFixedTextHeight(
+        for element: MarkdownRenderElement,
+        existingRoot: UIView?,
+        containerWidth: CGFloat
+    ) -> CGFloat? {
+        // 只有不含动态 attachment 的文本能固定高度。该高度属于内层
+        // MarkdownTextViewTK2，不能使用包含 paragraph/heading insets 的 root 高度，
+        // 否则重建 wrapper 时会再叠加一次上下间距。
+        guard let measuredFallback = fixedViewportTextHeight(
+            for: element,
+            containerWidth: containerWidth,
+            precalculatedTextHeight: nil
+        ) else { return nil }
+
+        if let existingRoot,
+           let textView = markdownTextView(in: existingRoot) {
+            textView.layoutIfNeeded()
+            let displayedHeight = max(textView.bounds.height, textView.frame.height)
+            if displayedHeight.isFinite, displayedHeight > 0.5 {
+                return ceil(displayedHeight)
+            }
+        }
+        return measuredFallback
     }
 
     func leaveViewportWindowForLegacyRendering() {
@@ -481,7 +773,7 @@ extension MarkdownViewTextKit {
             return
         }
 
-        let scrollView = findParentScrollView()
+        let scrollView = viewportHostScrollView()
         guard viewportScrollView !== scrollView else { return }
 
         viewportScrollObservation?.invalidate()
@@ -565,7 +857,9 @@ extension MarkdownViewTextKit {
             invalidateIntrinsicContentSize()
             scheduleHeightChangeNotification()
 
-            if abs(heightDeltaAboveViewport) > 0.5, !viewportSuppressesAnchorCorrection {
+            if abs(heightDeltaAboveViewport) > 0.5,
+               !viewportSuppressesAnchorCorrection,
+               !isEmbeddedInReusableCell() {
                 var offset = scrollView.contentOffset
                 offset.y += heightDeltaAboveViewport
                 scrollView.setContentOffset(offset, animated: false)
@@ -811,7 +1105,7 @@ extension MarkdownViewTextKit {
 
     func remeasureMountedViewportSlots() {
         guard !viewportSlots.isEmpty else { return }
-        let scrollView = viewportScrollView ?? findParentScrollView()
+        let scrollView = viewportScrollView ?? viewportHostScrollView()
         let viewport = scrollView.map { $0.convert($0.bounds, to: self) }
         var heightDeltaAboveViewport: CGFloat = 0
 
@@ -837,7 +1131,8 @@ extension MarkdownViewTextKit {
 
         guard abs(heightDeltaAboveViewport) > 0.5,
               let scrollView,
-              !viewportSuppressesAnchorCorrection else { return }
+              !viewportSuppressesAnchorCorrection,
+              !isEmbeddedInReusableCell() else { return }
         contentStackView.setNeedsLayout()
         contentStackView.layoutIfNeeded()
         var offset = scrollView.contentOffset
@@ -860,7 +1155,7 @@ extension MarkdownViewTextKit {
         guard let slot = ancestor as? MarkdownViewportSlotView,
               slot.contentView != nil else { return false }
 
-        let scrollView = viewportScrollView ?? findParentScrollView()
+        let scrollView = viewportScrollView ?? viewportHostScrollView()
         let viewport = scrollView.map { $0.convert($0.bounds, to: self) }
         let oldFrame = slot.convert(slot.bounds, to: self)
         let appliedDelta = slot.updateCachedHeight(slot.cachedHeight + delta)
@@ -873,7 +1168,8 @@ extension MarkdownViewTextKit {
         if let scrollView,
            let viewport,
            oldFrame.maxY <= viewport.minY,
-           !viewportSuppressesAnchorCorrection {
+           !viewportSuppressesAnchorCorrection,
+           !isEmbeddedInReusableCell() {
             scrollView.setNeedsLayout()
             scrollView.layoutIfNeeded()
             var offset = scrollView.contentOffset

@@ -145,6 +145,7 @@ class ChatMarkdownCell: UITableViewCell {
         
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.backgroundColor = .clear
+        markdownView.allowsStaticViewportRenderingInReusableCell = true
         markdownView.onHeightChange = { [weak self] newHeight in
             guard let self = self else { return }
 
@@ -471,7 +472,7 @@ class TableViewStreamingViewController: UIViewController {
     }
     
     @objc private func dismissSelf() {
-        self.dismiss(animated: true, completion: nil)
+        self.dismiss(animated: false, completion: nil)
     }
     
     @objc private func stopStreaming() {

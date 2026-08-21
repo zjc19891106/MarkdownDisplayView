@@ -62,6 +62,8 @@ extension MarkdownViewTextKit {
         renderWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
         lastPreparedContentSignature = nil
+        isDisplayingPreparedStaticContent = false
+        preparedStaticEstimatedHeight = nil
         // 下面会清空 contentStackView，本轮及之后若干次测高都会得到 0。
         // 屏蔽这段中间态的 0 高度上报，等重渲染出真实高度再通知宿主，
         // 否则宿主按 0 重排行高会把可见 Cell 推倒重来，反过来又触发 reset。

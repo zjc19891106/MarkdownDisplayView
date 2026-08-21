@@ -376,7 +376,7 @@ final class HistoryMDViewController: UIViewController {
     }
 
     @objc private func closeTapped() {
-        dismiss(animated: true)
+        dismiss(animated: false)
     }
 
     private func scheduleHeightUpdates(forRow row: Int) {
@@ -479,6 +479,15 @@ extension HistoryMDViewController: UITableViewDataSource, UITableViewDelegate {
         if !prefetchedRows.contains(indexPath.row) {
             cancelPreparation(forRow: indexPath.row)
         }
+        guard let historyCell = cell as? MarkdownHistoryCell else { return }
+        DispatchQueue.main.async { [weak tableView, weak historyCell] in
+            guard let tableView,
+                  let historyCell,
+                  tableView.indexPath(for: historyCell) == nil,
+                  !tableView.visibleCells.contains(where: { $0 === historyCell }),
+                  !historyCell.frame.intersects(tableView.bounds) else { return }
+            historyCell.releaseRenderedContent()
+        }
     }
 }
 
@@ -523,6 +532,7 @@ final class MarkdownHistoryCell: UITableViewCell {
         contentView.clipsToBounds = true
 
         markdownView.enableTypewriterEffect = false
+        markdownView.allowsStaticViewportRenderingInReusableCell = true
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.clipsToBounds = true
 
@@ -573,6 +583,7 @@ final class MarkdownHistoryCell: UITableViewCell {
         representedRow = row
         representedMarkdown = markdown
         representedWidth = width
+        markdownView.preferredMeasurementWidth = width
         preparationIndicator.stopAnimating()
         markdownView.isHidden = false
         // 历史消息为静态内容，一次性渲染不保留 diff 基线以省内存
@@ -586,6 +597,7 @@ final class MarkdownHistoryCell: UITableViewCell {
         representedRow = row
         representedMarkdown = markdown
         representedWidth = width
+        markdownView.preferredMeasurementWidth = width
         markdownView.resetForReuse()
         markdownView.isHidden = true
         preparationIndicator.startAnimating()
@@ -602,6 +614,7 @@ final class MarkdownHistoryCell: UITableViewCell {
         representedRow = row
         representedMarkdown = markdown
         representedWidth = width
+        markdownView.preferredMeasurementWidth = width
         preparationIndicator.stopAnimating()
         markdownView.isHidden = false
         markdownView.setPreparedContent(preparedContent)
@@ -616,6 +629,7 @@ final class MarkdownHistoryCell: UITableViewCell {
     ) -> Bool {
         guard represents(row: row, markdown: markdown, width: width) else { return false }
         renderToken = UUID()
+        markdownView.preferredMeasurementWidth = width
         preparationIndicator.stopAnimating()
         markdownView.isHidden = false
         markdownView.setPreparedContent(preparedContent)
@@ -627,6 +641,22 @@ final class MarkdownHistoryCell: UITableViewCell {
         representedRow == row
             && representedMarkdown == markdown
             && abs(representedWidth - width) <= 1
+    }
+
+    /// UITableView 将 Cell 放入复用队列时不会立即调用 `prepareForReuse()`。
+    /// 离屏即释放长文的 slots、文本池与自定义视图；页面级 prepared cache
+    /// 仍保留紧凑渲染模型，回滚时无需重新 parse Markdown。
+    func releaseRenderedContent() {
+        // 短文本由 UITableView 整行复用已经足够；反复清空只会让边界回滚
+        // 重新 parse/render。只清理已进入文档内视口窗口的长 prepared cell。
+        guard markdownView.isUsingStaticViewportRendering else { return }
+        renderToken = UUID()
+        representedRow = nil
+        representedMarkdown = nil
+        representedWidth = 0
+        preparationIndicator.stopAnimating()
+        markdownView.isHidden = false
+        markdownView.resetForReuse()
     }
 
     override func prepareForReuse() {

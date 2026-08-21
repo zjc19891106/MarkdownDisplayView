@@ -2697,7 +2697,7 @@ final class AIChatViewController: UIViewController {
         cancelActiveRequest(showMessage: false)
         streamSession?.cancel()
         streamSession = nil
-        dismiss(animated: true)
+        dismiss(animated: false)
     }
 
     @objc private func stopTapped() {
@@ -3740,6 +3740,7 @@ final class AIChatMessageCell: UITableViewCell {
         contentView.addSubview(bubbleView)
         markdownView.configuration = Self.markdownConfiguration(theme: nil)
         markdownView.enableTypewriterEffect = false
+        markdownView.allowsStaticViewportRenderingInReusableCell = true
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.onHeightChange = { [weak self] height in
             guard let self else { return }
@@ -3883,7 +3884,12 @@ final class AIChatMessageCell: UITableViewCell {
             if let preparedContent {
                 preparationIndicator.stopAnimating()
                 markdownView.isHidden = false
-                markdownView.setPreparedContent(preparedContent)
+                let alreadyPromotedSameSnapshot = previousMessageID == message.id
+                    && markdownView.markdown == message.renderedMarkdown
+                    && markdownView.isUsingStaticViewportRendering
+                if !alreadyPromotedSameSnapshot {
+                    markdownView.setPreparedContent(preparedContent)
+                }
             } else if showsPreparationPlaceholder {
                 // 本 Cell 已经在展示同一条消息时，不要清空重来。
                 // 典型场景是流式刚结束：消息转为非流式且长度超过预渲染阈值，

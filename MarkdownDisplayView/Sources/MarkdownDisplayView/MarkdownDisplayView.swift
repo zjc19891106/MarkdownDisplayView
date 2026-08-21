@@ -115,6 +115,8 @@ public final class MarkdownViewTextKit: UIView {
             // 相同内容重复赋值（例如 UITableView 复用 Cell 再次 configure）不应触发重渲染，
             // 否则会形成“渲染 → 高度通知 → batchUpdate → cellForRowAt → 再次渲染”的反馈环。
             guard oldValue != markdown else { return }
+            isDisplayingPreparedStaticContent = false
+            preparedStaticEstimatedHeight = nil
             invalidateIntrinsicHeightCache()
             // 🔍 性能监控：记录渲染开始时间
             if !isStreaming {
@@ -140,6 +142,8 @@ public final class MarkdownViewTextKit: UIView {
         // 预渲染内容通常是一次性静态展示，不保留 diff 基线以省内存（不重复持有整份富文本）
         retainsDiffBaseline = false
         lastPreparedContentSignature = signature
+        isDisplayingPreparedStaticContent = true
+        preparedStaticEstimatedHeight = preparedContent.estimatedTotalHeight
 
         renderStartTime = CFAbsoluteTimeGetCurrent()
         let containerWidth = preparedContent.preparedWidth
@@ -187,6 +191,22 @@ public final class MarkdownViewTextKit: UIView {
     /// 是否保留 oldElements 作为下一次全量渲染的 diff 基线。
     /// 静态一次性渲染可置 false 以省内存，代价是下一次重渲染不再复用旧视图。
     public var retainsDiffBaseline = true
+
+    /// 允许宿主显式将已预渲染完成的静态长文档，在
+    /// `UITableViewCell` / `UICollectionViewCell` 内也按外层滚动视口挂载。
+    /// 默认关闭，保持既有 Cell 渲染与 self-sizing 行为。
+    public var allowsStaticViewportRenderingInReusableCell = false
+
+    /// 当前内容是否已由静态视口窗口承载。宿主可用它避免在流式完成后
+    /// 又用相同内容的 prepared snapshot 覆盖已经收敛的视图树。
+    public var isUsingStaticViewportRendering: Bool {
+        !viewportSlots.isEmpty
+    }
+
+    // Cell 内视口窗口只接管 `setPreparedContent` 提交的完成态快照。
+    // 普通 markdown 和 streaming 路径不得借用该状态，避免行高在解析期抖动。
+    var isDisplayingPreparedStaticContent = false
+    var preparedStaticEstimatedHeight: CGFloat?
 
     // 异步渲染队列（串行，避免并发渲染）
     let renderQueue = DispatchQueue(label: "com.markdown.render", qos: .userInitiated)

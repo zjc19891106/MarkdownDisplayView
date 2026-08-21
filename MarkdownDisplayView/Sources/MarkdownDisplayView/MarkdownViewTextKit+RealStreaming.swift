@@ -442,21 +442,34 @@ extension MarkdownViewTextKit {
 
             mdLog("[FOOTNOTE_DEBUG] 🔴 finishBlock executing, rendering \(pendingFootnotes.count) footnotes")
 
-            // 1. 先渲染脚注（此时 TypewriterEngine 已完成，内容已全部显示）
-            if !pendingFootnotes.isEmpty {
-                let containerWidth = self.bounds.width > 0 ? self.bounds.width : UIScreen.main.bounds.width - 32
-                self.updateFootnotes(pendingFootnotes, width: containerWidth, newElementCount: self.oldElements.count)
-                mdLog("📝 [RealStream] Processed \(pendingFootnotes.count) footnotes at end")
-            }
+            let completedElements = self.oldElements
+            let containerWidth = self.bounds.width > 0
+                ? self.bounds.width
+                : UIScreen.main.bounds.width - 32
 
-            // 2. 仍处于真流式状态时做最终全量校准，让最后加入的脚注也进入高度缓存。
-            self.notifyHeightChange(force: true)
-
-            // 3. 重置状态
+            // drain 屏障已保证所有 element 都已经显示并完成布局。先退出
+            // streaming 分支，再用现有 elements / root views 原地转为静态视口。
             self.isRealStreamingMode = false
             self.isStreaming = false
             self.stopHapticFeedback()
             mdLog("[FOOTNOTE_DEBUG] 🔴 isRealStreamingMode set to FALSE")
+
+            let promoted = self.promoteCompletedStreamToViewportWindow(
+                elements: completedElements,
+                footnotes: pendingFootnotes,
+                containerWidth: containerWidth
+            )
+            if !promoted, !pendingFootnotes.isEmpty {
+                self.updateFootnotes(
+                    pendingFootnotes,
+                    width: containerWidth,
+                    newElementCount: completedElements.count
+                )
+                mdLog("📝 [RealStream] Processed \(pendingFootnotes.count) footnotes at end")
+            }
+
+            // promotion 保持完整结构高度；脚注若新增高度也只在这里合并通知一次。
+            self.notifyHeightChange(force: true)
 
             self.streamPerformanceDiagnostics.end(
                 pendingModules: self.realStreamParseInFlightCount,
@@ -465,7 +478,7 @@ extension MarkdownViewTextKit {
                 arrangedSubviews: self.contentStackView.arrangedSubviews.count
             )
 
-            // 4. 触发结束阶段传入的完成回调。
+            // 触发结束阶段传入的完成回调。
             externalCompletion?()
 
             let elapsed = (CFAbsoluteTimeGetCurrent() - self.streamingStartTimestamp) * 1000

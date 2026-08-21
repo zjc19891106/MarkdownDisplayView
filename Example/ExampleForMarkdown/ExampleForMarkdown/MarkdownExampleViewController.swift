@@ -90,7 +90,7 @@ class MarkdownExampleViewController: UIViewController {
     }
 
     @objc private func dismissSelf() {
-        dismiss(animated: true, completion: nil)
+        dismiss(animated: false, completion: nil)
     }
     
     @objc private func backToMenus() {
