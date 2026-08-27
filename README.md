@@ -865,6 +865,9 @@ markdownView.setPreparedContent(preparedContent)
 - 🧪 **Regression Coverage** - Added tests for sub-9pt streaming growth reporting, block width yielding to host layout, and atomic quote text visibility during append streaming.
 - 🖥 **Example: HTML/JS Code Preview** - Added an HTML/JS code-block preview renderer and demo sample to the example app.
 
+<details>
+<summary>Show release notes for 2.0.0 and earlier</summary>
+
 ### 2.0.0 (2026-08-13)
 
 - 🤖 **AI Chat Web Search & Tool Calls** - The AI Chat examples now call DeepSeek's function-calling API with a built-in `web_search` tool. When the model needs information beyond its training data it requests a search, the demo performs a real web search (Bing by default; Tavily, DuckDuckGo, and Bocha also supported), feeds the results back, and streams the final answer. Search failures degrade gracefully, and multi-turn tool-call context (`reasoning_content`) is persisted across turns.
@@ -892,9 +895,6 @@ markdownView.setPreparedContent(preparedContent)
 - 🔒 **Deterministic Module and Extension Handling** - Complete modules preserve global ordering and document-wide heading IDs. Fenced code and opaque custom blocks remain intact across chunk boundaries, and custom streaming tags stay explicitly opt-in through `streamingBlockTagName`.
 - 🧹 **Smart-Streaming API and Demo Cleanup** - Smart-stream usage is consolidated around `beginRealStreaming()`, `appendStreamData(_:)`, and `endRealStreaming(completion:)`; the pre-split `appendBlock` path and unused streaming demo controls were removed.
 - 📊 **Opt-In Performance Diagnostics and Regression Coverage** - Added `[MDPERF]` aggregate diagnostics via `MD_STREAM_PERF_LOG=1` / `MD_STREAM_PERF_ONLY=1`, plus coverage for Unicode punctuation, emoji boundaries, FIFO ordering, backpressure, redraw deduplication, height caching, and final drain behavior. The merged baseline passed 68 iOS Simulator tests and SwiftPM/CocoaPods example builds.
-
-<details>
-<summary>Show release notes for 1.8.9 and earlier</summary>
 
 ### 1.8.9 (2026-07-31)
 

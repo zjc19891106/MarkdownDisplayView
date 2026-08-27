@@ -873,6 +873,9 @@ markdownView.setPreparedContent(preparedContent)
 - 🧪 **回归测试覆盖** - 新增亚 9pt 流式增长上报、块宽度让位于宿主布局、Append 流式下原子引用文本可见性等用例。
 - 🖥 **示例：HTML/JS 代码预览** - 示例 App 新增 HTML/JS 代码块预览渲染器与演示样例。
 
+<details>
+<summary>展开查看 2.0.0 及更早版本记录</summary>
+
 ### 2.0.0 (2026-08-13)
 
 - 🤖 **AI 对话联网搜索与工具调用** - AI Chat 示例接入 DeepSeek 的 function calling，内置 `web_search` 工具：当模型需要训练数据之外的信息时会发起搜索，示例执行真实联网搜索（默认 Bing，另支持 Tavily、DuckDuckGo、Bocha），将结果回传并流式输出最终答案；搜索失败优雅降级，多轮工具调用上下文（`reasoning_content`）跨轮持久化。
@@ -900,9 +903,6 @@ markdownView.setPreparedContent(preparedContent)
 - 🔒 **模块与自定义扩展处理确定化** - 完整模块保持全局顺序和文档级标题 ID；fenced code 与 opaque 自定义块跨 chunk 时保持完整，自定义流式标签继续通过 `streamingBlockTagName` 显式启用。
 - 🧹 **智能流式 API 与示例收敛** - 智能流式统一使用 `beginRealStreaming()`、`appendStreamData(_:)` 和 `endRealStreaming(completion:)`；删除预切块 `appendBlock` 路径及未使用的流式示例控件。
 - 📊 **可选性能诊断与回归覆盖** - 新增通过 `MD_STREAM_PERF_LOG=1` / `MD_STREAM_PERF_ONLY=1` 开启的 `[MDPERF]` 聚合诊断，并覆盖 Unicode 标点、emoji 边界、FIFO 顺序、背压、重绘去重、高度缓存和最终 drain。合并基线已通过 68 项 iOS Simulator 测试以及 SwiftPM/CocoaPods 示例构建。
-
-<details>
-<summary>展开查看 1.8.9 及更早版本记录</summary>
 
 ### 1.8.9 (2026-07-31)
 
