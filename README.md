@@ -2,17 +2,15 @@
 
 # MarkdownDisplayView
 
-A UIKit Markdown renderer for iOS built on TextKit 2, with configurable styles, background parsing, incremental UI updates, and real-time AI/SSE streaming.
+A high-performance **100% pure native** UIKit Markdown renderer for iOS built on TextKit 2, with a **built-in native LaTeX math & chemistry (inorganic/organic) typesetting engine**, configurable styles, background parsing, incremental UI updates, and real-time AI/SSE streaming.
 
-- A 16 KB sample document (covering most styles) loads and scrolls in ~60–70 MB on an iPhone 14 Pro.
+- **100% Pure Native (Zero-WebView)**: In-house recursive-descent LaTeX parser and CoreGraphics/CoreText 2D geometric typesetting engine with zero web-view overhead and instant sub-millisecond rendering.
+- **Exclusive Chemical Formula Support**: Native support for inorganic reaction equations (`\ce` with auto subscripts/charges/equilibrium) and organic structural formulas (`\chemfig` vector-drawn benzene rings, aromatic rings, TNT, toluene, substituents).
+- **Excellent Memory Efficiency**: A 16 KB sample document (covering most styles) loads and scrolls in ~60–70 MB on an iPhone 14 Pro.
+- **Fluid AI Streaming**: Handles random-length chunks with a peak memory of ~140 MB, dropping back to ~70 MB once streaming finishes; stays around ~40 MB in real multi-turn AI conversations.
+- **20 Bundled KaTeX Vector Fonts**: Automatically registers academic fonts dynamically, differentiating math italics from roman operators with publication-grade typography.
 
-- The same 16 KB document streamed in random-length chunks peaks around 140 MB; memory drops back to ~70 MB after streaming stops, and more deltas can keep being appended.
-
-- History documents keep only the visible + adjacent screens of layers; memory drops while scrolling, ending around 50 MB.
-
-- After 4 rounds of real AI chat, memory stays around 40 MB; it drops on scroll, rises slightly while the model streams, and falls again once streaming completes and the message becomes static.
-
-> 🚀 **Designed for AI chat and document screens: render complete Markdown or append live AI/SSE deltas with configurable styling, typewriter output, and haptic feedback.**
+> 🚀 **Designed for AI chat and document screens: render complete Markdown or append live AI/SSE deltas with publication-grade native math and chemistry typesetting.**
 
 ## Contents
 
@@ -63,12 +61,13 @@ Create an untracked `Config.local.json` in the example target when you want to r
 
 | Capability | What it provides |
 |------------|------------------|
-| Rendering | TextKit 2, background parsing, first-screen-first and incremental UI updates |
-| AI/SSE streaming | Safe module buffering, ordered deltas, typewriter output, height caching, and optional haptics |
-| Markdown | Headings, lists, tables, blockquotes, images, LaTeX, footnotes, details, and horizontally scrollable code blocks |
-| Code highlighting | Built-in highlighting for 20+ common languages |
+| Rendering Architecture | TextKit 2, background parsing, first-screen-first and incremental UI updates, 100% native with zero WebView dependency |
+| AI/SSE Streaming | Safe module buffering, ordered deltas, typewriter output, height caching, and optional haptics; zero-flicker streaming for complex STEM formulas |
+| 🧮 Pure Native LaTeX & Chemistry | **Custom math & chemistry engine** with 20 bundled KaTeX fonts; supports calculus, matrices, cases, inorganic equations (`\ce`), and organic chemical structures (`\chemfig`) |
+| Markdown Standard | Headings, lists, tables, blockquotes, images, LaTeX math, footnotes, details, and horizontally scrollable code blocks |
+| Code Highlighting | Built-in syntax highlighting for 20+ common programming languages |
 | Navigation | Generated table of contents, heading navigation, and internal anchors |
-| Styling | Fonts, colors, spacing, light/dark presets, and block appearance |
+| Styling & Themes | Fonts, colors, spacing, light/dark presets, and block appearance (formulas & code blocks follow themes) |
 | Extensions | Custom parsers, view providers, action handlers, and fenced-code renderers |
 | Callbacks | Link, image, TOC, height, and streaming-step events |
 
@@ -311,27 +310,76 @@ public var latexBackgroundColor: UIColor   // LaTeX formula background color
 public var latexPadding: CGFloat           // LaTeX formula padding (default: 20)
 ```
 
-#### LaTeX Formula Syntax
+#### 🧮 Pure Native LaTeX & Chemistry Formula Syntax
 
-Two formula forms are supported:
+The component features a 100% in-house native LaTeX lexer and parser (`LatexLexer` + `LatexParser`), coupled with a custom CoreGraphics / CoreText 2D geometric typesetting engine and 20 bundled KaTeX academic fonts for sub-millisecond rendering — **completely free of any Web containers or JS engines**.
+
+##### 1. Basic Formula Forms
 
 - **Inline math** — wrap in single dollars `$...$`; it flows inline inside paragraphs, headings, table cells, blockquotes, and list items:
-
   ```markdown
   Energy is $E=mc^2$ and momentum is $p=mv$.
   ```
-
-- **Display math** — wrap in double dollars `$$...$$`; it renders as a full-width, centered block:
-
+- **Display math** — wrap in double dollars `$$...$$`; it renders as a full-width, centered block with native single-touch horizontal scrolling support for ultra-wide formulas:
   ```markdown
   $$
   \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
   $$
   ```
+- **Fenced math** — a ```` ```math ```` fence renders a display formula; a ```` ```latex ```` fence stays raw code so documentation examples are not executed.
 
-- **Fenced math** — a `math` fence renders a display formula; a `latex` fence stays source code so documentation examples are not executed.
+> 💡 `$...$` inside backticks (inline code) stays literal and is never treated as math.
 
-> `$...$` inside backticks (inline code) stays literal and is never treated as math.
+##### 2. Advanced Mathematics & Physics
+
+- **Calculus, Limits & Summations**:
+  ```markdown
+  $$\lim_{x \to 0} \frac{\sin x}{x} = 1, \quad \sum_{i=0}^{n} i^2 = \frac{n(n+1)(2n+1)}{6}$$
+  ```
+- **Matrices & Piecewise Systems (Cases)**:
+  ```markdown
+  $$\begin{bmatrix} 1 & x & x^2 \\ 0 & 1 & 2x \\ 0 & 0 & 2 \end{bmatrix}, \quad f(x) = \begin{cases} x^2 & x > 0 \\ -x & x \le 0 \end{cases}$$
+  ```
+- **Dynamic Parentheses & Radicals**: `\left( \frac{a}{b} \right)` and `\sqrt[n]{x}` dynamically stretch to match content height.
+- **Physical Vectors, Accents & Enclosures**: `\mathbf{F} = m \vec{a}`, `\hat{v} = \frac{\dot{r}}{|r|}`, `\boxed{\bar{v}}`.
+
+##### 3. Inorganic Chemical Equations (`\ce{...}`)
+
+Native mhchem syntax support with automated subscript detection, ionic charge superscripts, and chemical equilibrium:
+- **Classic Reaction Equations**:
+  ```markdown
+  $$\ce{2H2 + O2 -> 2H2O}$$
+  $$\ce{2C8H18 + 25O2 -> 16CO2 + 18H2O}$$
+  ```
+- **Ionic Reactions with Precipitate/Gas Indicators**:
+  ```markdown
+  $$\ce{Cu^2+ + 2OH- -> Cu(OH)2 v}$$
+  $$\ce{[Ag(NH3)2]+ + OH- -> AgOH v + 2NH3}$$
+  ```
+- **Chemical Equilibrium & Annotated Arrows**:
+  ```markdown
+  $$\ce{N2 + 3H2 <=>[high T][high P] 2NH3}$$
+  $$C_2H_5OH + CH_3COOH \xrightarrow{\text{conc. } H_2SO_4} CH_3COOC_2H_5 + H_2O$$
+  ```
+
+##### 4. Organic Chemical Structures (`\chemfig{...}`)
+
+A rare **iOS native CoreGraphics vector-rendered chemical structure engine**, supporting aromatic rings and spatial substituent layouts:
+- **Basic Benzene Rings & Kekulé Structures**:
+  ```markdown
+  $$\chemfig{**6(------)}$$
+  $$\chemfig{*6(-=-=-=)}$$
+  ```
+- **Toluene, Phenol & Trinitrotoluene (TNT) Substituents**:
+  ```markdown
+  $$\chemfig{**6(---(-OH)---)}$$
+  $$\chemfig{**6(---(-CH_3)---)}$$
+  $$\chemfig{**6(-NO_2-(-CH_3)-NO_2--NO_2-)}$$
+  ```
+- **Full Organic Chemical Reaction Equations (Mixed Structures & Text)**:
+  ```markdown
+  $$\chemfig{**6(---(-CH_3)---)} + 3HNO_3 \longrightarrow \chemfig{**6(-NO_2-(-CH_3)-NO_2--NO_2-)} + 3H_2O$$
+  ```
 
 #### Blockquote Configuration
 
