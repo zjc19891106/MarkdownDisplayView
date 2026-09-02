@@ -4,6 +4,120 @@ All notable changes to this project will be documented in this file.
 
 本项目的所有重要更改都将记录在此文件中。
 
+## [2.1.8] - 2026-08-20
+
+### Added / 新增
+- 🪟 **Viewport Virtualization for Static Documents / 静态文档视口虚拟化** - Long static documents no longer create every root text layer up front; keep only visible views' backing stores resident and release offscreen ones on scroll / 长静态文档不再提前创建所有根文本视图，只保留可见视图的 backing store，滚动时释放离屏视图
+- 🧱 **Bounded Backing-Store Budget for Complex Blocks / 复杂块的背衬存储预算有界化** - Virtualization covers LaTeX formulas, tables, default code blocks, and list/quote composites / 视口虚拟化扩展到 LaTeX 公式、表格、代码块与列表/引用组合
+- 🧱 **Optional Diff-Baseline Release / 可选释放 diff 基线** - `retainsDiffBaseline` allows static one-shot renders to skip retaining full element list / 允许静态一次性渲染不再保留全量元素列表
+
+### Changed / 变更
+- 📉 **Redundant Full-Text Copies Removed / 去除冗余全文拷贝** - Stream buffer is the single source of accumulated text / 以流式缓存为全文唯一来源并在流结束后释放
+- ⚡ **Faster Block LaTeX Rendering / 块级 LaTeX 渲染提速** - Block formulas created directly from parsed result / 块级公式直接用解析结果创建视图，去掉冗余布局管线
+
+### Fixed / 修复
+- 🧹 **Complete deinit Cleanup / deinit 清理补全** - Invalidate run-loop timers, cancel pending work items, clear streaming queues on dealloc / 视图析构时停掉 RunLoop 定时器、取消待执行任务、清空待处理队列
+- 🐛 **AI Chat URLSession Retain Cycle Fixed / 修复 AI Chat URLSession 保留环** - Invalidate `URLSession` on completion and deinit / 聊天流会话在结束与析构时 invalidate 其 `URLSession`
+
+## [2.1.2] - 2026-08-19
+
+### Added / 新增
+- ➗ **Inline LaTeX in Every Inline Context / 行内 LaTeX 全面支持** - Inline `$...$` renders as an inline attachment in paragraphs, headings, table cells, blockquotes, and list items / 行内 `$...$` 在段落、标题、表格单元格、引用块和列表项中内联渲染
+- 🛡 **Inline Code Is Not Math / 行内代码不再被误判为公式** - `$...$` inside backticks stays literal; added `\dfrac` / `\tfrac` fraction aliases / 反引号内 `$...$` 保持字面量，新增 `\dfrac` / `\tfrac` 分数别名
+- 📐 **CommonMark Fenced-Code Detection / CommonMark 围栏代码块识别** - Follows CommonMark fence rules (≤3 leading spaces, ≥3 backticks or tildes) / 遵循 CommonMark 围栏规则
+- 📊 **Table & Code Layout Configs Effective / 表格与代码布局配置生效** - `tableMinColumnWidth`, `tableMaxColumnWidth`, `tableRowHeight`, `tableCellPadding`, `tableSeparatorHeight`, `codeBlockPadding`, `tableCellVerticalPadding` / 表格与代码块布局配置真正生效
+
+### Fixed / 修复
+- 🖼 **Inline Image Ordering / 行内图片顺序** - Inline images keep their position inside paragraphs / 行内图片保持其在段落中的位置，不再被提前
+- 🧱 **Details Expand & Snapshot-Safe Rendering / 折叠块展开与快照安全渲染** - Details expand/collapse keeps correct content / 折叠块展开/收起不再丢内容更新
+
+## [2.1.1] - 2026-08-18
+
+### Added / 新增
+- 📏 **First-Pass Cell Height Accuracy / 首次测高即准确** - Added `preferredMeasurementWidth` for one-pass accurate height / 新增 `preferredMeasurementWidth` 实现单趟准确测高
+- 🖥 **Example: HTML/JS Code Preview / 示例：HTML/JS 代码预览** - Added HTML/JS code block preview renderer to demo / 示例 App 新增 HTML/JS 代码块预览渲染器
+
+### Changed / 变更
+- ✨ **Flicker-Free Append Typewriter Wrapping / Append 打字机折行不再闪烁** - Remeasures height every frame / Append 打字机改为每帧测高，消除折行边界闪烁
+- 📏 **Incremental Streaming Height Threshold / 流式增量高度阈值下调** - Notifies host on any growth >0.5pt (down from 9pt) / 任意超过 0.5pt 的增长都上报宿主
+
+### Fixed / 修复
+- 🧱 **Snapshot Width Yields to Host Layout / 快照宽度让位于宿主布局** - Width constraints use 999 priority to avoid conflict / 宽度约束改为 999 优先级
+- 🐛 **Zero-Height Feedback Loop Fixed / 修复 0 高度反馈环** - Suppresses transient zero height after `resetForReuse()` / `resetForReuse()` 后抑制空内容阶段 0 高度上报
+- 🧱 **Atomic Quote/Details Text in Append Mode / Append 模式下原子引用/详情文本** - Layout text at final height before revealing / 引用块、详情块子文本在整块揭示前先按最终高度排版
+- 🧪 **Regression Coverage / 回归测试覆盖** - Added regression test cases / 新增回归测试覆盖
+
+## [2.0.0] - 2026-08-13
+
+### Added / 新增
+- 🤖 **AI Chat Web Search & Tool Calls / AI 对话联网搜索与工具调用** - DeepSeek function calling with built-in `web_search` tool / AI Chat 示例接入 DeepSeek function calling 与内置联网搜索
+- 🗣 **AI Chat Copy & Read-Aloud Footer / AI 对话复制与朗读底部操作** - Copy full message and read aloud via SpeechKit / 新增复制全部内容与基于 SpeechKit 的朗读功能
+- 🧠 **Thinking Mode Parameters / Thinking 模式参数** - Pass-through `thinking` & `reasoning_effort` / 透传 `thinking` 与 `reasoning_effort` 参数
+
+### Changed / 变更
+- 📊 **Faster Table Horizontal Scrolling / 表格横向滚动更流畅** - Optimized collection layout and direction locking / 优化集合布局与方向锁定，提升表格滑动流畅度
+
+### Fixed / 修复
+- 🐛 **Fixed Self-Sizing Constraint Conflicts / 修复自适高约束冲突** - Lower priority on width constraints / 降低宽度约束优先级消除警告
+- 🐛 **Fixed Re-render Feedback Loop / 修复重复渲染反馈环** - Prevent full re-render on identical content assignment / 赋值相同内容不再触发整篇重渲染
+
+## [1.9.9] - 2026-08-06
+
+### Added / 新增
+- 🎨 **Four Demo Themes & Gallery / 四套 Demo 主题与主题画廊** - Parchment, Sage, Midnight, Plum themes / 新增暖纸张、鼠尾草、深海代码和暮紫夜色四套主题
+- 🧱 **Configurable Block Appearance / 块级外观可配置** - Corner-radius and border configuration for blocks / 为代码块、引用块、表格、图片、LaTeX 和详情块新增圆角与边框配置
+- ➗ **Theme-Aware Formula Rendering / 公式渲染跟随主题** - Added `latexTextColor` / 新增 `latexTextColor` 使公式字形与线条随主题切换
+
+### Changed / 变更
+- 🔄 **Consistent Prepared-Content Styling / 预渲染样式保持一致** - Inject same theme configuration / 注入同一份主题配置，避免使用过期主题颜色
+- 🖼 **Cleaner Image Defaults / 更干净的图片默认外观** - Keep rounding, disable default borders / 保留图片圆角，默认关闭图片边框
+
+## [1.9.8] - 2026-08-04
+
+### Added / 新增
+- 🚀 **Backpressured Smart-Streaming Pipeline / 带背压的智能流式管线** - Serial background parsing with frame budget & watermarks / 后台串行解析与单帧预算/高低水位控制
+- ⚡ **DisplayLink Typewriter Scheduling / 基于 DisplayLink 的打字机调度** - 30 FPS `CADisplayLink` timeline with O(1) FIFO head / 30 FPS `CADisplayLink` 调度与 O(1) FIFO 消费
+- 📏 **Incremental Height Cache / 增量高度缓存** - Incremental height growth tracking & cache / 增量高度跟踪与缓存
+- 📊 **Performance Diagnostics / 性能诊断与回归覆盖** - Added `[MDPERF]` aggregate diagnostics / 新增 `[MDPERF]` 聚合诊断
+
+### Changed / 变更
+- ✨ **Stable Rendering Without Repaint Flashes / 稳定渲染避免重复重绘闪烁** - Invalidate only on real bounds change / 仅真实 bounds 变化时重绘
+- 🧱 **Bounded Rich-Block Layout Work / 富文本块布局工作量有界** - Tables and quotes layout bounded / 限制表格与引用块布局开销
+- 🔒 **Deterministic Module & Extension Handling / 模块与自定义扩展处理确定化** - Global ordering and heading IDs preserved / 保持全局顺序与标题 ID
+- 🧹 **Smart-Streaming API Consolidation / 智能流式 API 收敛** - Consolidated around `beginRealStreaming`, `appendStreamData`, `endRealStreaming` / 统一智能流式 API
+
+## [1.8.9] - 2026-07-31
+
+### Added / 新增
+- 🔒 **Thread-Safe Custom Extension Registry / 自定义扩展注册表线程安全** - Thread-safe parser and renderer registries / 扩展注册与读取加锁保护
+- ⚡ **Single-Pass LaTeX Rendering / LaTeX 公式真正单次解析** - Parse once and share render result across layout and view / 公式单次解析共享渲染结果
+
+### Changed / 变更
+- 🖼 **Unified Kingfisher Image Pipeline / 统一使用 Kingfisher 图片管线** - Image loading and caching handled by Kingfisher / 图片加载与缓存统一交由 Kingfisher
+- 🧩 **Modularized Markdown Renderer / Markdown 渲染器模块化拆分** - Split monolithic view into extension files / 拆分为职责清晰的 extension 文件
+
+## [1.8.6] - 2026-07-31
+
+### Fixed / 修复
+- 🐛 **Fixed Initial Details-Block Whitespace / 修复首次进入时折叠模块前大段留白** - List wrapper strictly follows content height / 列表 wrapper 严格跟随真实内容高度
+- 📏 **Synchronized Deferred Layout / 无需滑动同步延迟布局** - Final height propagated via `contentLayoutGuide` / 最终高度主动同步
+- 📍 **Preserved Scroll Position / 追加式渲染保持当前滚动位置** - Correct `contentOffset` calculation for offscreen appends / 避免追加内容影响滚动位置
+
+## [1.8.5] - 2026-07-30
+
+### Performance / 性能
+- ⚡ **Incremental Stream Buffer Scanning / 流式缓存器增量扫描** - Scan only uncommitted tail (1.6x-3.8x speedup) / 仅扫描未提交尾部，提速 1.6~3.8 倍
+- ⚡ **TextKit 2 Incremental Layout / TextKit 2 增量排版与测高** - Incremental editing transactions without full replacement / 事务内增量修改与测高
+- ⚡ **LaTeX Formula Parse Deduplication / LaTeX 公式解析去重** - Deduplicated repeated formula parsing / 避免单个公式重复解析
+- ⚡ **Persistent Typewriter Watchdog / 打字机看门狗常驻 Timer** - Persistent timer in `.common` mode / 常驻 Timer 兜底
+
+### Fixed / 修复
+- 🐛 **Regression Bug Fixes / 修复回归缺陷** - Fixed container width semantics, dirty-rect clipping, off-screen fade-in / 修复容器宽度、脏矩形裁剪与淡入过渡
+- 🐛 **Eliminated Background UIKit Access / 消除后台线程 UIKit 访问** - Snapshot container width on main thread / 主线程读取宽度快照
+- 🐛 **Streaming Auto-Scroll Improvements / 流式自动滚动优化** - User takeover detection / 增加用户接管判定
+- 🧹 **Code Cleanup / 代码清理** - Removed unused code and added `#if DEBUG` guards / 删除死代码并添加日志守卫
+- ✨ **Enhanced AI Chat Examples / AI 对话示例增强** - Added chat history support / 新增聊天历史记录能力
+
 ## [1.8.1] - 2026-07-15
 
 ### Fixed / 修复
