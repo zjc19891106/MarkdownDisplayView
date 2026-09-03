@@ -965,17 +965,10 @@ MarkdownDisplayView 由 [@zjc19891106](https://github.com/zjc19891106) 创建和
 
 如有问题或建议，请通过以下方式联系：
 
-- 提交 [GitHub Issue](https://github.com/zjc19891106/MarkdownDisplayView/issues)
+- 提交 [GitHub Issue](https://github.com/zjc19891106/MarkdownDisplayView/issues) 或 [Pull Request](https://github.com/zjc19891106/MarkdownDisplayView/pulls)
 - 发送邮件至：984065974@qq.com 或 luomobancheng@gmail.com
-
 - QQ 群 
-![QQ群](./Communication/qq.jpeg) 
-
-- Telegram
-![Telegram](./Communication/telegram.jpeg)
-
-- Discord
-![Discord](./Communication/discord.jpeg)
+  ![QQ群](./Communication/qq.jpeg) 
 
 ---
 

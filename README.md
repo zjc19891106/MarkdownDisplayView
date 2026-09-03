@@ -957,18 +957,11 @@ If this library saved you time, consider supporting me. Thanks to everyone who h
 
 If you have questions or suggestions, please contact via:
 
-- Submit [GitHub Issue](https://github.com/zjc19891106/MarkdownDisplayView/issues)
+- Submit a [GitHub Issue](https://github.com/zjc19891106/MarkdownDisplayView/issues) or [Pull Request](https://github.com/zjc19891106/MarkdownDisplayView/pulls)
 - Send email to: 984065974@qq.com or luomobancheng@gmail.com
-
 - QQ Group
-![QQ Group](./Communication/qq.jpeg)
-
-- Telegram
-![Telegram](./Communication/telegram.jpeg)
-
-- Discord
-![Discord](./Communication/discord.jpeg)
+  ![QQ Group](./Communication/qq.jpeg)
 
 ---
 
-**If you find this project helpful, please give it a Star ⭐️ for support!
+**If you find this project helpful, please give it a Star ⭐️ for support!**
