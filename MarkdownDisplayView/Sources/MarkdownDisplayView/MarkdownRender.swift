@@ -181,8 +181,12 @@ public final class MarkdownRenderer {
             return (CGFloat(lines) * 20 + 40, nil)
 
         case .table(let data):
-            let rowCount = data.rows.count + 1
-            return (CGFloat(rowCount) * 44 + 24, nil)
+            let tableResult = MarkdownTableLayoutCalculator.calculate(
+                data: data,
+                config: configuration,
+                containerWidth: containerWidth
+            )
+            return (tableResult.totalSize.height, nil)
 
         case .list(let items, _):
             var totalHeight: CGFloat = 0

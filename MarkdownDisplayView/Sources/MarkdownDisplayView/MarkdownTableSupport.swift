@@ -7,6 +7,26 @@
 
 import UIKit
 
+// MARK: - Cell Geometry (single source of truth for padding)
+
+/// 表格单元格内边距的唯一几何来源。
+/// 布局计算器（`MarkdownTableLayoutCalculator`）和单元格（`MarkdownTableCell`）
+/// 都通过该结构读取内边距，确保测量口径与实际排版完全一致。
+struct MarkdownTableCellGeometry: Equatable {
+    /// 单侧水平内边距（按像素网格取整）
+    let horizontalPadding: CGFloat
+    /// 单侧垂直内边距（按像素网格取整）
+    let verticalPadding: CGFloat
+
+    init(config: MarkdownConfiguration) {
+        horizontalPadding = max(0, ceil(config.tableCellPadding))
+        verticalPadding = max(0, ceil(config.tableCellVerticalPadding))
+    }
+
+    var totalHorizontal: CGFloat { horizontalPadding * 2 }
+    var totalVertical: CGFloat { verticalPadding * 2 }
+}
+
 // MARK: - Layout Calculator
 
 struct MarkdownTableLayoutResult {
@@ -29,8 +49,7 @@ struct MarkdownTableLayoutCalculator {
             )
         }
 
-        // 水平内边距（左右各 tableCellPadding）
-        let horizontalPadding = config.tableCellPadding * 2
+        let geometry = MarkdownTableCellGeometry(config: config)
 
         // 1. Calculate Column Widths
         let columnCount = max(
@@ -39,13 +58,13 @@ struct MarkdownTableLayoutCalculator {
         )
         var columnWidths: [CGFloat] = Array(repeating: config.tableMinColumnWidth, count: columnCount)
 
-        // Helper to measure text width
         func measureWidth(_ text: NSAttributedString) -> CGFloat {
-            return text.boundingRect(
-                with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: config.tableRowHeight),
-                options: [.usesLineFragmentOrigin],
+            let width = text.boundingRect(
+                with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
                 context: nil
-            ).width + horizontalPadding
+            ).width
+            return ceil(width) + geometry.totalHorizontal
         }
 
         // Measure Headers
@@ -64,19 +83,20 @@ struct MarkdownTableLayoutCalculator {
             }
         }
 
-        // Cap max width per column to prevent super wide columns
-        columnWidths = columnWidths.map { min($0, config.tableMaxColumnWidth) }
+        // Cap max width per column, then ceil to avoid sub-pixel rounding clipping
+        columnWidths = columnWidths.map { ceil(min($0, config.tableMaxColumnWidth)) }
 
         // 2. Calculate Row Heights
         var rowHeights: [CGFloat] = []
 
         func measureHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
-            let availableWidth = max(1, width - horizontalPadding)
-            return text.boundingRect(
-                with: CGSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin],
+            let availableWidth = max(1, width - geometry.totalHorizontal)
+            let measured = text.boundingRect(
+                with: CGSize(width: availableWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
                 context: nil
-            ).height + config.tableCellVerticalPadding * 2 // 上下各 tableCellVerticalPadding
+            ).height
+            return ceil(measured) + geometry.totalVertical
         }
 
         // Header Height
@@ -100,11 +120,10 @@ struct MarkdownTableLayoutCalculator {
         }
 
         let totalWidth = columnWidths.reduce(0, +)
-        let totalHeight = rowHeights.reduce(0, +) + CGFloat(rowHeights.count) * config.tableSeparatorHeight
+        // CollectionView 内部不绘制分隔行，contentSize 等于 Σ rowHeights。
+        // 仅在外层追加一个 separatorHeight 作为视觉边框余量。
+        let totalHeight = rowHeights.reduce(0, +) + config.tableSeparatorHeight
 
-        // Attachment Frame Width: min(totalWidth, containerWidth)
-        // If table is smaller than screen, use table width.
-        // If table is larger, use screen width (and scroll internally).
         let frameWidth = min(totalWidth, containerWidth)
 
         return MarkdownTableLayoutResult(
@@ -142,9 +161,6 @@ class MarkdownTableLayout: UICollectionViewLayout {
     override func prepare() {
         super.prepare()
 
-        // UITableView 自适应高度和 TextKit attachment 可能多次要求同一张表布局。
-        // 表格几何只由列宽、行高决定；输入未变时复用 attributes，避免 O(rows × columns)
-        // 地重复创建 UICollectionViewLayoutAttributes。
         if columnWidths == preparedColumnWidths,
            rowHeights == preparedRowHeights,
            !layoutAttributes.isEmpty {
@@ -162,7 +178,7 @@ class MarkdownTableLayout: UICollectionViewLayout {
             contentSize = .zero
             return
         }
-        print("[MarkdownTable] layout prepare cells=\(rowHeights.count * columnWidths.count) rebuild=\(layoutRebuildCount)")
+        mdLog("[MarkdownTable] layout prepare cells=\(rowHeights.count * columnWidths.count) rebuild=\(layoutRebuildCount)")
         
         var currentX: CGFloat = 0
         for width in columnWidths {
@@ -203,7 +219,6 @@ class MarkdownTableLayout: UICollectionViewLayout {
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
         guard !layoutAttributes.isEmpty, !columnWidths.isEmpty, !rowHeights.isEmpty else { return nil }
         
-        // 只遍历与 rect 相交的行(section)与列(item)区间，避免横向滚动时每帧全量过滤。
         var firstSection = -1
         for section in 0..<rowHeights.count {
             if sectionYOffsets[section] + rowHeights[section] > rect.minY {
@@ -265,6 +280,11 @@ class MarkdownTableCell: UICollectionViewCell {
     private let label = UILabel()
     private let border = UIView()
     
+    private var labelLeading: NSLayoutConstraint!
+    private var labelTrailing: NSLayoutConstraint!
+    private var labelTop: NSLayoutConstraint!
+    private var labelBottom: NSLayoutConstraint!
+    
     override init(frame: CGRect) {
         super.init(frame: frame)
         
@@ -275,11 +295,16 @@ class MarkdownTableCell: UICollectionViewCell {
         contentView.addSubview(border)
         border.translatesAutoresizingMaskIntoConstraints = false
         
+        labelLeading = label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
+        labelTrailing = label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: 0)
+        labelTop = label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 0)
+        labelBottom = label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: 0)
+        
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
-            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -10),
+            labelLeading,
+            labelTrailing,
+            labelTop,
+            labelBottom,
             
             border.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             border.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -299,12 +324,21 @@ class MarkdownTableCell: UICollectionViewCell {
         text: NSAttributedString,
         isHeader: Bool,
         borderColor: UIColor,
-        textAlignment: NSTextAlignment
+        textAlignment: NSTextAlignment,
+        geometry: MarkdownTableCellGeometry
     ) {
+        // 只在值真的变化时赋值：横向滚动的 cell 复用是热路径，
+        // 无条件写 constant 会每次都触发 setNeedsLayout。
+        if labelTop.constant != geometry.verticalPadding {
+            labelTop.constant = geometry.verticalPadding
+            labelBottom.constant = -geometry.verticalPadding
+        }
+        if labelLeading.constant != geometry.horizontalPadding {
+            labelLeading.constant = geometry.horizontalPadding
+            labelTrailing.constant = -geometry.horizontalPadding
+        }
+        
         label.textAlignment = textAlignment
-        // 表格单元格文本通常不带 .paragraphStyle（只有 .font/.link 等），
-        // 直接用 label.textAlignment 即可。只有确实存在段落样式时才做对齐覆盖，
-        // 避免每次横向滚动复用时都做一次全文拷贝 + 枚举（导致掉帧）。
         if text.length > 0, text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) != nil {
             label.attributedText = text.withOverriddenParagraphAlignment(textAlignment)
         } else {
@@ -341,8 +375,6 @@ private extension NSAttributedString {
         let mutable = NSMutableAttributedString(attributedString: self)
         let fullRange = NSRange(location: 0, length: mutable.length)
 
-        // 表格单元格文本使用富文本渲染，段落样式中的 alignment 优先级高于控件默认对齐。
-        // 这里统一覆盖为列对齐，避免 Markdown 默认段落样式把对齐“拉回左侧”。
         mutable.enumerateAttribute(.paragraphStyle, in: fullRange, options: []) { value, range, _ in
             let paragraphStyle: NSMutableParagraphStyle
             if let style = value as? NSParagraphStyle {
@@ -389,22 +421,18 @@ class MarkdownTableCollectionView: UIView, UICollectionViewDataSource, UICollect
         collectionView.allowsSelection = true
         collectionView.register(MarkdownTableCell.self, forCellWithReuseIdentifier: MarkdownTableCell.identifier)
         
-        // 允许水平滚动
         collectionView.isScrollEnabled = true
-        // 横向锁定：嵌在纵向 UITableView 里时，避免与竖向滚动手势竞争导致卡顿
         collectionView.isDirectionalLockEnabled = true
-        // 禁用垂直滚动（由外层处理），但 contentSize.height = frame.height，所以本身也不会垂直滚
         collectionView.showsHorizontalScrollIndicator = true
         collectionView.showsVerticalScrollIndicator = false
         
         addSubview(collectionView)
-        print("[MarkdownTable] view cols=\(attachment.columnWidths.count) sections=\(attachment.tableData.rows.count + 1) totalW=\(Int(attachment.totalSize.width))")
+        mdLog("[MarkdownTable] view cols=\(attachment.columnWidths.count) sections=\(attachment.tableData.rows.count + 1) totalW=\(Int(attachment.totalSize.width))")
     }
     
     // MARK: DataSource
     
     func numberOfSections(in collectionView: UICollectionView) -> Int {
-        // Headers (section 0) + Rows
         return 1 + attachment.tableData.rows.count
     }
     
@@ -423,7 +451,6 @@ class MarkdownTableCollectionView: UIView, UICollectionViewDataSource, UICollect
             cell.backgroundColor = attachment.configuration.tableHeaderBackgroundColor
         } else {
             rowData = attachment.tableData.rows[indexPath.section - 1]
-            // Alternate colors
             if (indexPath.section - 1) % 2 == 1 {
                 cell.backgroundColor = attachment.configuration.tableAlternateRowBackgroundColor
             } else {
@@ -431,7 +458,6 @@ class MarkdownTableCollectionView: UIView, UICollectionViewDataSource, UICollect
             }
         }
         
-        // Safely get text
         let text: NSAttributedString
         if indexPath.item < rowData.count {
             text = rowData[indexPath.item]
@@ -439,16 +465,15 @@ class MarkdownTableCollectionView: UIView, UICollectionViewDataSource, UICollect
             text = NSAttributedString(string: "")
         }
 
-        // 列对齐优先使用 Markdown 表格语法中的列对齐，缺省时回退为左对齐
         let textAlignment = attachment.tableData.columnAlignments[safe: indexPath.item]
             .flatMap { $0 } ?? .left
         
-        // Use semi-transparent border to mimic grid
         cell.configure(
             text: text,
             isHeader: isHeader,
             borderColor: attachment.configuration.tableBorderColor.withAlphaComponent(0.3),
-            textAlignment: textAlignment
+            textAlignment: textAlignment,
+            geometry: attachment.cellGeometry
         )
         
         return cell
@@ -469,6 +494,7 @@ class MarkdownTableAttachment: NSTextAttachment {
     let columnWidths: [CGFloat]
     let rowHeights: [CGFloat]
     let totalSize: CGSize
+    let cellGeometry: MarkdownTableCellGeometry
     let onLinkTap: ((URL) -> Void)?
     
     init(
@@ -481,8 +507,8 @@ class MarkdownTableAttachment: NSTextAttachment {
         self.tableData = data
         self.configuration = config
         self.onLinkTap = onLinkTap
+        self.cellGeometry = MarkdownTableCellGeometry(config: config)
         
-        // Pre-calculate layout
         let result = layoutResult ?? MarkdownTableLayoutCalculator.calculate(
             data: data,
             config: config,
@@ -491,14 +517,11 @@ class MarkdownTableAttachment: NSTextAttachment {
         self.columnWidths = result.columnWidths
         self.rowHeights = result.rowHeights
         self.totalSize = result.totalSize
-        print("[MarkdownTable] created rows=\(data.rows.count + 1) cols=\(result.columnWidths.count) totalW=\(Int(result.totalSize.width)) totalH=\(Int(result.totalSize.height)) containerW=\(Int(containerWidth))")
+        mdLog("[MarkdownTable] created rows=\(data.rows.count + 1) cols=\(result.columnWidths.count) totalW=\(Int(result.totalSize.width)) totalH=\(Int(result.totalSize.height)) containerW=\(Int(containerWidth))")
         
         super.init(data: nil, ofType: nil)
         
-        // Set an empty image to prevent the default placeholder icon from appearing
         self.image = UIImage()
-        
-        // Set attachment bounds
         self.bounds = CGRect(origin: .zero, size: self.totalSize)
     }
     
