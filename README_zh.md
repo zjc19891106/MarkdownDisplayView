@@ -129,7 +129,7 @@ Swift Package Manager 会自动解析 `swift-markdown` 和 `Kingfisher`。
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 2.1.1'
+pod 'MarkdownDisplayKit', '~> 2.1.9'
 ```
 
 然后运行:
@@ -890,6 +890,10 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## 更新日志
+
+### 2.1.9 (2026-09-18)
+
+- 📊 **修复表格单元格多行文字底部被裁切** - 全量渲染、流式渲染、历史快照恢复三条路径里，表格折行后最后一行（或最后几行）会被切掉。根因是布局计算器按 `tableCellPadding` / `tableCellVerticalPadding` 测高，单元格却硬编码左右 12、上下 10，测量口径和真实 `UILabel` 对不齐；高度还用了未 `ceil`、也没加 `.usesFontLeading` 的小数 `boundingRect`，垂直方向几乎没有余量时就会裁到字脚。三条路径现在共用 `MarkdownTableCellGeometry`；测量改为 `ceil(boundingRect + usesFontLeading)` 再加上与单元格相同的内边距；列宽行高取整到整点；`totalSize` 与 CollectionView `contentSize` 对齐（`Σ rowHeights + 1×separatorHeight` 作为边框余量）。快照恢复的表格预估高度也改为同一套计算器，不再用 `rowCount × 44`。
 
 ### 2.1.8 (2026-08-20)
 

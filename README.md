@@ -121,7 +121,7 @@ Swift Package Manager resolves `swift-markdown` and `Kingfisher` automatically.
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 2.1.1'
+pod 'MarkdownDisplayKit', '~> 2.1.9'
 ```
 
 Then run:
@@ -882,6 +882,10 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## Changelog
+
+### 2.1.9 (2026-09-18)
+
+- 📊 **Table Cell Multiline Text No Longer Clipped** - Wrapped text in table cells was cut off at the bottom in full render, streaming, and history-snapshot restore. The layout calculator measured with `tableCellPadding` / `tableCellVerticalPadding`, but the cell hard-coded 12 / 10 insets, so the measured box did not match the real `UILabel`. Height also used a fractional `boundingRect` without `ceil` or `.usesFontLeading`, which is enough to clip the last line when there is no slack. All three render paths now share `MarkdownTableCellGeometry`; measurement uses `ceil(boundingRect + usesFontLeading)` plus the same padding as the cell; column widths and row heights snap to whole points; `totalSize` matches CollectionView `contentSize` (`Σ rowHeights + 1×separatorHeight` as a border allowance). Snapshot restore now estimates table height with the same calculator instead of `rowCount × 44`.
 
 ### 2.1.8 (2026-08-20)
 

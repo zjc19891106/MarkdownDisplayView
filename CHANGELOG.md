@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 本项目的所有重要更改都将记录在此文件中。
 
+## [2.1.9] - 2026-09-18
+
+### Fixed / 修复
+- 📊 **Table Cell Multiline Text Clipping / 表格单元格多行文字底部被裁切** - Wrapped cell text was clipped in full render, streaming, and history-snapshot restore because the layout calculator and `MarkdownTableCell` used different paddings, and `boundingRect` was not ceiled. All three paths now share `MarkdownTableCellGeometry`; measurement uses `ceil(boundingRect + usesFontLeading)` with the same insets as the label; column/row sizes snap to whole points; `totalSize` matches CollectionView `contentSize`; snapshot restore estimates table height with `MarkdownTableLayoutCalculator` instead of `rowCount × 44` / 全量、流式、历史快照恢复中折行文字底部被裁切：计算器与单元格内边距不同步，且 `boundingRect` 未取整。现统一为 `MarkdownTableCellGeometry`，测量口径与单元格一致，列宽行高取整，总高与 `contentSize` 对齐，快照预估高度改用同一套计算器。
+
 ## [2.1.8] - 2026-08-20
 
 ### Added / 新增
