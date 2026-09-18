@@ -210,6 +210,24 @@ final class HistoryMDViewController: UIViewController {
     private func prepareMessages() {
         let baseTableArray = [
             """
+            ## CJK 换行回归（Issue #35）
+
+            对照三列：日文、中文应铺满行宽后才折行，不能提前断成「レポー / ト」这种短行；英文按单词折行即可。
+
+            ### 日文（issue 原文）
+
+            こんにちは、ご参加いただいた「各評価〜レポート」が生成されました。下記カードをクリックしてレポートをプレビュー、ダウンロードして保存してご覧いただけます。
+            ワンポイントアドバイス！、360度評価レポートは、自分自身を各視点から知ることの役立つ鏡であり、現段階の強みと弱みを把握し、感情や認識をしていただけると思います。
+
+            ### 中文
+
+            你好，感谢参与本次各级评价。系统已经生成对应的评价报告，请点击下方卡片预览报告，下载后保存即可查看。一点建议：三百六十度评价报告像一面镜子，能从多个视角认识自己，帮助看清当前阶段的优势与不足，也便于整理情绪和自我认知。
+
+            ### English
+
+            Thank you for joining this multi-rater evaluation. Your report is ready. Tap the card below to preview the report, then download and save it. One tip: a 360-degree evaluation report is a useful mirror for seeing yourself from several viewpoints, so you can understand current strengths and gaps more clearly.
+            """,
+            """
             ## 表格长内容裁切回归
 
             历史快照恢复路径：单元格文字应完整显示到最后一行，不能被底部裁切。
