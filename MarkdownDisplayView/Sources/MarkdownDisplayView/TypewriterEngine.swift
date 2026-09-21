@@ -81,6 +81,7 @@ struct TypewriterPunctuationProfile {
         0x003B, // ;
         0xFF1B, // ；
         0x000A, // newline
+        0x2028, // line separator (soft break rendered as a compact line break)
     ]
 
     private let extraDelays: [Int: TimeInterval]

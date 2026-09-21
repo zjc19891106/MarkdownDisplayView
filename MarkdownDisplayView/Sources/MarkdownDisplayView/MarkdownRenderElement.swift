@@ -217,6 +217,31 @@ extension CALayer {
     }
 }
 
+// MARK: - Soft Break Rendering
+
+/// 段落内单个换行（CommonMark 里的 `SoftBreak`）的渲染方式。
+///
+/// 长文在编辑器里按列宽硬折行时，这个换行只是源码排版，应该并回一行；
+/// 聊天消息、卡片文案里的换行则是作者要求的断行。两种意图无法从文本本身
+/// 可靠区分，由调用方按内容来源选择。
+public enum MarkdownSoftBreakStyle: Sendable {
+    /// CommonMark 规范行为：软换行等价于空格，整段按容器宽度重新折行。
+    case space
+    /// 断行但不分段：行距仍是 `lineSpacing`，不会插入 `paragraphSpacing`。
+    case lineBreak
+    /// 断行并分段：TextKit 会在断点处补上 `paragraphSpacing`，视觉上等于两段。
+    case paragraphBreak
+
+    /// U+2028 LINE SEPARATOR 终结行但不终结段落，因此 `.lineBreak` 拿到的是紧凑换行。
+    var character: String {
+        switch self {
+        case .space: return " "
+        case .lineBreak: return "\u{2028}"
+        case .paragraphBreak: return "\n"
+        }
+    }
+}
+
 // MARK: - MarkdownConfiguration
 public struct MarkdownConfiguration: Sendable {
     
@@ -324,6 +349,11 @@ public struct MarkdownConfiguration: Sendable {
     public var streamingHapticMinInterval: TimeInterval = 0.05
     /// 行间距配置（用于替换渲染层固定的 lineSpacing 常量）
     public var lineSpacing: MarkdownLineSpacingConfiguration = .default
+    /// 段落内单换行的渲染方式。
+    ///
+    /// ⚠️ 实验分支上默认 `.lineBreak`，用于验证"单 `\n` 即换行"。
+    /// 合并前需确认是否改回 `.space`（CommonMark 规范默认）。
+    public var softBreakStyle: MarkdownSoftBreakStyle = .lineBreak
     
     public static var `default`: MarkdownConfiguration {
         MarkdownConfiguration(

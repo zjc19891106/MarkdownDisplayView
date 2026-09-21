@@ -1030,7 +1030,7 @@ final class MarkdownParser: MarkdownParserProtocol {
     // MARK: - Breaks
     
     private func renderSoftBreak() -> NSMutableAttributedString {
-        return NSMutableAttributedString(string: " ")
+        return NSMutableAttributedString(string: configuration.softBreakStyle.character)
     }
     
     private func renderLineBreak() -> NSMutableAttributedString {
