@@ -349,10 +349,8 @@ public struct MarkdownConfiguration: Sendable {
     public var streamingHapticMinInterval: TimeInterval = 0.05
     /// 行间距配置（用于替换渲染层固定的 lineSpacing 常量）
     public var lineSpacing: MarkdownLineSpacingConfiguration = .default
-    /// 段落内单换行的渲染方式。
-    ///
-    /// ⚠️ 实验分支上默认 `.lineBreak`，用于验证"单 `\n` 即换行"。
-    /// 合并前需确认是否改回 `.space`（CommonMark 规范默认）。
+    /// 段落内单换行的渲染方式。默认 `.lineBreak`：单换行断行，不插入 `paragraphSpacing`。
+    /// 需要 CommonMark 行为（软换行并成空格）时设为 `.space`。
     public var softBreakStyle: MarkdownSoftBreakStyle = .lineBreak
     
     public static var `default`: MarkdownConfiguration {

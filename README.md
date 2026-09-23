@@ -121,7 +121,7 @@ Swift Package Manager resolves `swift-markdown` and `Kingfisher` automatically.
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 2.1.9'
+pod 'MarkdownDisplayKit', '~> 2.2.3'
 ```
 
 Then run:
@@ -223,6 +223,7 @@ config.lineSpacing = MarkdownLineSpacingConfiguration(
     quote: 6,
     codeBlock: 4
 )
+config.softBreakStyle = .lineBreak          // Single newline wraps without paragraph spacing
 
 // Apply configuration
 markdownView.configuration = config
@@ -285,6 +286,7 @@ public var listIndent: CGFloat             // List indentation
 public var blockquoteIndent: CGFloat       // Blockquote indentation
 public var imageMaxHeight: CGFloat         // Maximum image height
 public var imagePlaceholderHeight: CGFloat // Image placeholder height
+public var softBreakStyle: MarkdownSoftBreakStyle // How a single newline inside a paragraph renders (default: .lineBreak)
 ```
 
 #### Line Spacing Configuration
@@ -883,6 +885,10 @@ markdownView.setPreparedContent(preparedContent)
 
 ## Changelog
 
+### 2.2.3 (2026-09-23)
+
+- ↩️ **Single Newlines Inside a Paragraph Now Wrap** - A single newline inside a paragraph is a CommonMark soft break, and it used to render as a space. Chat and card copy that breaks lines with one `\n` therefore stayed on one reflowed line. `MarkdownSoftBreakStyle` chooses the rendering. The default `.lineBreak` inserts U+2028, which ends the line without ending the paragraph, so `lineSpacing` still applies and `paragraphSpacing` is not inserted between those lines. `.paragraphBreak` inserts `\n`, and TextKit adds `paragraphSpacing`, which looks like two paragraphs. `.space` keeps the CommonMark collapse into a space. Hard breaks (two trailing spaces or a trailing `\`) are unchanged, and fenced code blocks are unaffected.
+
 ### 2.1.9 (2026-09-18)
 
 - 📊 **Table Cell Multiline Text No Longer Clipped** - Wrapped text in table cells was cut off at the bottom in full render, streaming, and history-snapshot restore. The layout calculator measured with `tableCellPadding` / `tableCellVerticalPadding`, but the cell hard-coded 12 / 10 insets, so the measured box did not match the real `UILabel`. Height also used a fractional `boundingRect` without `ceil` or `.usesFontLeading`, which is enough to clip the last line when there is no slack. All three render paths now share `MarkdownTableCellGeometry`; measurement uses `ceil(boundingRect + usesFontLeading)` plus the same padding as the cell; column widths and row heights snap to whole points; `totalSize` matches CollectionView `contentSize` (`Σ rowHeights + 1×separatorHeight` as a border allowance). Snapshot restore now estimates table height with the same calculator instead of `rowCount × 44`.
@@ -896,26 +902,6 @@ markdownView.setPreparedContent(preparedContent)
 - 🧱 **Optional Diff-Baseline Release** - `retainsDiffBaseline` lets static one-shot renders (e.g. `setPreparedContent`) skip retaining the full element list, avoiding a duplicate attributed-text copy; static demo pages opt in.
 - ⚡ **Faster Block LaTeX Rendering** - Block formulas are created directly from the parsed render result, dropping the redundant per-formula TextKit 2 layout pipeline.
 - 🐛 **AI Chat URLSession Retain Cycle Fixed** - The chat stream session now invalidates its `URLSession` on completion and in `deinit`, so each finished chat no longer leaks a session pair.
-
-### 2.1.2 (2026-08-19)
-
-- ➗ **Inline LaTeX in Every Inline Context** - Inline `$...$` now renders as an inline attachment inside paragraphs, headings, table cells, blockquotes, and list items; display `$$...$$` stays block-level. Oversized inline formulas scale to fit the line width instead of being clipped.
-- 🛡 **Inline Code Is Not Math** - `$...$` inside backticks stays literal, and a fenced `latex` block is kept as source code (only `math` renders as a formula), so documentation examples are no longer misread as math. Added `\dfrac` / `\tfrac` fraction aliases.
-- 📐 **CommonMark Fenced-Code Detection** - The smart-stream buffer now follows CommonMark fence rules: ≤3 leading spaces, ≥3 backticks or tildes, and the closing fence must match the opening character and length (tilde fences included).
-- 📊 **Table & Code Layout Configs Now Effective** - `tableMinColumnWidth`, `tableMaxColumnWidth`, `tableRowHeight`, `tableCellPadding`, `tableSeparatorHeight`, and `codeBlockPadding` now actually take effect (previously hardcoded), and a new `tableCellVerticalPadding` controls vertical cell padding. `headingSpacing` is deprecated in favor of `headingTopSpacing` / `headingBottomSpacing`.
-- 🖼 **Inline Image Ordering** - Inline images keep their position inside a paragraph instead of being hoisted before the surrounding text.
-- 🧱 **Details Expand & Snapshot-Safe Rendering** - Details expand/collapse no longer drops content updates, and complete-document rendering stays correct while keeping snapshot-safe layout.
-
-### 2.1.1 (2026-08-18)
-
-- 📏 **First-Pass Cell Height Accuracy** - Added `preferredMeasurementWidth` so hosts can supply the final content width before the first layout pass. Cell height is now correct on the first measurement instead of being applied in two passes (grow, then re-layout).
-- ✨ **Flicker-Free Append Typewriter Wrapping** - The append typewriter now remeasures height every frame instead of every N characters. Soft-wrapped new lines get their height immediately, eliminating the flash at wrap boundaries. Host notifications remain throttled by actual height change; `typewriterHeightUpdateInterval` is deprecated and no longer affects rendering.
-- 📏 **Incremental Streaming Height Threshold** - The real-streaming incremental path now notifies the host on any growth above 0.5pt (down from 9pt), so the cell's required layout height follows the content instead of clipping text until it crosses a threshold.
-- 🧱 **Snapshot Width Yields to Host Layout** - List wrapper, blockquote, and thematic-break width constraints now use 999 priority, so pre-layout snapshot widths give way to the host's real width and avoid unsatisfiable-constraint recovery layouts.
-- 🐛 **Zero-Height Feedback Loop Fixed** - After `resetForReuse()`, transient zero heights are suppressed until real content is rendered, breaking the render → height-callback → batch-update → cell-reuse loop.
-- 🧱 **Atomic Quote/Details Text in Append Mode** - Quote and details descendants are now laid out at their final height before the whole block is revealed, keeping their text visible during append typewriter playback.
-- 🧪 **Regression Coverage** - Added tests for sub-9pt streaming growth reporting, block width yielding to host layout, and atomic quote text visibility during append streaming.
-- 🖥 **Example: HTML/JS Code Preview** - Added an HTML/JS code-block preview renderer and demo sample to the example app.
 
 > 📖 For older release notes, see [CHANGELOG.md](CHANGELOG.md).
 

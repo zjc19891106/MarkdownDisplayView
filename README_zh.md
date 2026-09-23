@@ -129,7 +129,7 @@ Swift Package Manager 会自动解析 `swift-markdown` 和 `Kingfisher`。
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 2.1.9'
+pod 'MarkdownDisplayKit', '~> 2.2.3'
 ```
 
 然后运行:
@@ -231,6 +231,7 @@ config.lineSpacing = MarkdownLineSpacingConfiguration(
     quote: 6,
     codeBlock: 4
 )
+config.softBreakStyle = .lineBreak          // 段落内单换行即换行，不插入段落间距
 
 // 应用配置
 markdownView.configuration = config
@@ -293,6 +294,7 @@ public var listIndent: CGFloat             // 列表缩进
 public var blockquoteIndent: CGFloat       // 引用缩进
 public var imageMaxHeight: CGFloat         // 图片最大高度
 public var imagePlaceholderHeight: CGFloat // 图片占位符高度
+public var softBreakStyle: MarkdownSoftBreakStyle // 段落内单换行的渲染方式（默认 .lineBreak）
 ```
 
 #### 行间距配置
@@ -891,6 +893,10 @@ markdownView.setPreparedContent(preparedContent)
 
 ## 更新日志
 
+### 2.2.3 (2026-09-23)
+
+- ↩️ **段落内单换行默认即换行** - 段落里的单个换行是 CommonMark 的软换行，以前会渲染成空格，聊天和卡片文案里用单个 `\n` 断行的内容会粘在同一段里、只按容器宽度重折。新增 `MarkdownSoftBreakStyle`：默认 `.lineBreak` 插入 U+2028，只断行、不分段，行距仍是 `lineSpacing`，断行之间不会插入 `paragraphSpacing`；`.paragraphBreak` 插入 `\n`，TextKit 会补上 `paragraphSpacing`，视觉上等于两段；`.space` 保持 CommonMark，软换行并成空格。硬换行（行尾两个空格或 `\`）不变，代码围栏不受影响。
+
 ### 2.1.9 (2026-09-18)
 
 - 📊 **修复表格单元格多行文字底部被裁切** - 全量渲染、流式渲染、历史快照恢复三条路径里，表格折行后最后一行（或最后几行）会被切掉。根因是布局计算器按 `tableCellPadding` / `tableCellVerticalPadding` 测高，单元格却硬编码左右 12、上下 10，测量口径和真实 `UILabel` 对不齐；高度还用了未 `ceil`、也没加 `.usesFontLeading` 的小数 `boundingRect`，垂直方向几乎没有余量时就会裁到字脚。三条路径现在共用 `MarkdownTableCellGeometry`；测量改为 `ceil(boundingRect + usesFontLeading)` 再加上与单元格相同的内边距；列宽行高取整到整点；`totalSize` 与 CollectionView `contentSize` 对齐（`Σ rowHeights + 1×separatorHeight` 作为边框余量）。快照恢复的表格预估高度也改为同一套计算器，不再用 `rowCount × 44`。
@@ -904,26 +910,6 @@ markdownView.setPreparedContent(preparedContent)
 - 🧱 **可选释放 diff 基线** - `retainsDiffBaseline` 让静态一次性渲染（如 `setPreparedContent`）不再保留全量元素列表，避免重复持有富文本；静态示例页已启用。
 - ⚡ **块级 LaTeX 渲染提速** - 块级公式直接用解析结果创建视图，去掉每个公式冗余的 TextKit 2 布局管线。
 - 🐛 **修复 AI Chat URLSession 保留环** - 聊天流会话在结束与析构时 invalidate 其 `URLSession`，每次聊完不再泄漏一对会话对象。
-
-### 2.1.2 (2026-08-19)
-
-- ➗ **行内 LaTeX 全面支持** - 行内 `$...$` 现在会在段落、标题、表格单元格、引用块和列表项中作为行内附件渲染；块级 `$$...$$` 保持块级显示。超宽行内公式会缩放到行宽，不再被裁切。
-- 🛡 **行内代码不再被误判为公式** - 反引号内的 `$...$` 保持字面量，`latex` 围栏保持源码（只有 `math` 渲染为公式），文档示例不再被误读为公式。新增 `\dfrac` / `\tfrac` 分数别名。
-- 📐 **CommonMark 围栏代码块识别** - 智能流式缓存现在遵循 CommonMark 围栏规则：≤3 个前导空格、≥3 个反引号或波浪线、闭围栏需匹配字符与长度（含波浪线围栏）。
-- 📊 **表格与代码布局配置生效** - `tableMinColumnWidth`、`tableMaxColumnWidth`、`tableRowHeight`、`tableCellPadding`、`tableSeparatorHeight`、`codeBlockPadding` 现在真正生效（此前为硬编码），并新增 `tableCellVerticalPadding` 控制单元格垂直内边距。`headingSpacing` 已废弃，改用 `headingTopSpacing` / `headingBottomSpacing`。
-- 🖼 **行内图片顺序** - 行内图片保持其在段落中的位置，不再被提前到文本之前。
-- 🧱 **折叠块展开与快照安全渲染** - 折叠块展开/收起不再丢内容更新，完整文档渲染保持正确并兼容快照安全布局。
-
-### 2.1.1 (2026-08-18)
-
-- 📏 **首次测高即准确** - 新增 `preferredMeasurementWidth`，宿主可在首次布局前告知最终内容宽度，Cell 首轮测高即正确，避免「先长高、再重刷」的两趟行高应用。
-- ✨ **Append 打字机折行不再闪烁** - Append 打字机改为每帧测高，不再按字符数节流。软折行产生的新行立即获得高度，消除折行边界闪烁；对宿主的通知仍按「高度是否真正变化」节流，`typewriterHeightUpdateInterval` 已废弃、不再影响渲染。
-- 📏 **流式增量高度阈值下调** - 真流式增量路径改为任意超过 0.5pt 的增长都上报宿主（原为 9pt），Cell 的 required 布局高度实时跟随内容，不再裁切正在打字的文字。
-- 🧱 **快照宽度让位于宿主布局** - 列表包裹、引用块、分隔线宽度约束改为 999 优先级，预排版快照宽度让位于宿主真实宽度，避免 unsatisfiable-constraints 恢复布局。
-- 🐛 **修复 0 高度反馈环** - `resetForReuse()` 后抑制空内容阶段的 0 高度上报，消除「渲染 → 高度回调 → batch 更新 → cell 复用」的自激环。
-- 🧱 **Append 模式下原子引用/详情文本** - 引用块、详情块的子文本在整块揭示前先按最终高度排版，避免 Append 打字机播放期间文字被裁掉。
-- 🧪 **回归测试覆盖** - 新增亚 9pt 流式增长上报、块宽度让位于宿主布局、Append 流式下原子引用文本可见性等用例。
-- 🖥 **示例：HTML/JS 代码预览** - 示例 App 新增 HTML/JS 代码块预览渲染器与演示样例。
 
 > 📖 更多历史版本更新记录，请参阅 [CHANGELOG.md](CHANGELOG.md)。
 

@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 本项目的所有重要更改都将记录在此文件中。
 
+## [2.2.3] - 2026-09-23
+
+### Fixed / 修复
+- ↩️ **Paragraph Soft Breaks Wrap by Default / 段落内单换行默认即换行** - A single newline inside a paragraph is a CommonMark soft break and used to render as a space, so one `\n` in chat or card copy stayed on one reflowed line. `MarkdownSoftBreakStyle` now chooses the rendering: default `.lineBreak` inserts U+2028 (line break without `paragraphSpacing`), `.paragraphBreak` inserts `\n` and TextKit adds `paragraphSpacing`, `.space` keeps the CommonMark collapse. Hard breaks and fenced code are unchanged / 段落内单个换行以前渲染成空格，聊天和卡片里的单个 `\n` 不会断行。新增 `MarkdownSoftBreakStyle`：默认 `.lineBreak` 用 U+2028 断行但不插入 `paragraphSpacing`，`.paragraphBreak` 插入 `\n` 并带段落间距，`.space` 保持 CommonMark。硬换行与代码围栏不变。
+
 ## [2.1.9] - 2026-09-18
 
 ### Fixed / 修复
